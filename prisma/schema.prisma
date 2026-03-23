@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String?
+  displayName   String
+  avatarUrl     String?
+  level         String    @default("A2")   // A1 | A2 | B1 | B2
+  totalXp       Int       @default(0)
+  streakDays    Int       @default(0)
+  lastActiveAt  DateTime?
+  isAdmin       Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  userMissions  UserMission[]
+
+  @@map("users")
+}
+
+model Scene {
+  id               String   @id @default(uuid())
+  title            String
+  category         String   // work | travel | daily | social
+  description      String
+  missionText      String
+  difficulty       String   // A1 | A2 | B1 | B2
+  estimatedMinutes Int      @default(5)
+  characterName    String
+  characterRole    String
+  systemPrompt     String
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  vocabulary       SceneVocabulary[]
+  sessions         Session[]
+
+  @@map("scenes")
+}
+
+model SceneVocabulary {
+  id         String @id @default(uuid())
+  sceneId    String
+  word       String
+  definition String
+  example    String
+
+  scene      Scene  @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+
+  @@map("scene_vocabulary")
+}
+
+model Session {
+  id               String    @id @default(uuid())
+  userId           String
+  sceneId          String
+  status           String    @default("active") // active | completed | abandoned
+  grammarScore     Float?
+  vocabularyScore  Float?
+  naturalnessScore Float?
+  xpEarned         Int       @default(0)
+  startedAt        DateTime  @default(now())
+  endedAt          DateTime?
+
+  user             User      @relation(fields: [userId], references: [id])
+  scene            Scene     @relation(fields: [sceneId], references: [id])
+  messages         Message[]
+
+  @@map("sessions")
+}
+
+model Message {
+  id           String   @id @default(uuid())
+  sessionId    String
+  role         String                           // "user" | "ai"
+  content      String
+  turnIndex    Int
+  feedbackData Json?                            // FeedbackData object
+  createdAt    DateTime @default(now())
+
+  session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model DailyMission {
+  id          String  @id @default(uuid())
+  title       String
+  description String
+  missionType String  // complete_scene | achieve_score | streak
+  targetValue Int
+  xpReward    Int     @default(50)
+  isActive    Boolean @default(true)
+
+  userMissions UserMission[]
+
+  @@map("daily_missions")
+}
+
+model UserMission {
+  id          String    @id @default(uuid())
+  userId      String
+  missionId   String
+  date        String    // "2025-03-23"
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+
+  user        User         @relation(fields: [userId], references: [id])
+  mission     DailyMission @relation(fields: [missionId], references: [id])
+
+  @@unique([userId, missionId, date])
+  @@map("user_missions")
+}

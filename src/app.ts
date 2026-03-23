@@ -1,0 +1,25 @@
+import express, { Express, Request, Response, NextFunction } from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import 'dotenv/config';
+
+import { errorHandler } from './middleware/errorHandler';
+
+const app: Express = express();
+
+app.use(helmet());
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+app.get('/api/health', (req: Request, res: Response) => {
+  res.status(200).json({ ok: true, timestamp: new Date().toISOString() });
+});
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Route not found' } });
+});
+
+app.use(errorHandler);
+
+export default app;
