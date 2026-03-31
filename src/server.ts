@@ -12,8 +12,7 @@ async function bootstrap() {
     const server = app.listen(PORT, () => {
       console.log(`🚀 Scenio Backend is running on http://localhost:${PORT}`);
     });
-
-    // Graceful shutdown
+    
     const shutdown = async () => {
       console.log('🛑 Shutting down server...');
       server.close(async () => {

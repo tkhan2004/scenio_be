@@ -1,49 +1,77 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Scenio — Prisma Schema
+// Database: PostgreSQL
+// ─────────────────────────────────────────────────────────────────────────────
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
-model User {
-  id            String    @id @default(uuid())
-  email         String    @unique
-  passwordHash  String?
-  displayName   String
-  avatarUrl     String?
-  level         String    @default("A2")   // A1 | A2 | B1 | B2
-  totalXp       Int       @default(0)
-  streakDays    Int       @default(0)
-  lastActiveAt  DateTime?
-  isAdmin       Boolean   @default(false)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH & USERS
+// ─────────────────────────────────────────────────────────────────────────────
 
-  sessions      Session[]
-  userMissions  UserMission[]
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  password       String? // null nếu đăng nhập Google OAuth
+  googleId       String?   @unique // null nếu đăng nhập email
+  displayName    String?
+  avatarUrl      String?
+  level          Level     @default(A2)
+  totalXp        Int       @default(0)
+  streakDays     Int       @default(0)
+  lastActiveDate DateTime? @db.Date // DATE thay vì timestamp để tính streak dễ hơn
+  isAdmin        Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  sessions       Session[]
+  userMissions   UserMission[]
+  userBadges     UserBadge[]
+  userVocabulary UserVocabulary[]
+  refreshTokens  RefreshToken[]
 
   @@map("users")
 }
 
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENES
+// ─────────────────────────────────────────────────────────────────────────────
+
 model Scene {
-  id               String   @id @default(uuid())
+  id               String        @id @default(uuid())
   title            String
-  category         String   // work | travel | daily | social
+  category         SceneCategory
   description      String
   missionText      String
-  difficulty       String   // A1 | A2 | B1 | B2
-  estimatedMinutes Int      @default(5)
+  difficulty       Level
+  estimatedMinutes Int           @default(5)
   characterName    String
   characterRole    String
-  systemPrompt     String
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  systemPrompt     String        @db.Text
+  isActive         Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
-  vocabulary       SceneVocabulary[]
-  sessions         Session[]
+  vocabulary SceneVocabulary[]
+  sessions   Session[]
 
   @@map("scenes")
 }
@@ -54,53 +82,79 @@ model SceneVocabulary {
   word       String
   definition String
   example    String
+  sortOrder  Int    @default(0)
 
-  scene      Scene  @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  scene          Scene            @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  userVocabulary UserVocabulary[]
 
+  @@index([sceneId])
   @@map("scene_vocabulary")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSIONS & MESSAGES
+// ─────────────────────────────────────────────────────────────────────────────
+
 model Session {
-  id               String    @id @default(uuid())
+  id               String        @id @default(uuid())
   userId           String
   sceneId          String
-  status           String    @default("active") // active | completed | abandoned
+  status           SessionStatus @default(ACTIVE)
   grammarScore     Float?
   vocabularyScore  Float?
   naturalnessScore Float?
-  xpEarned         Int       @default(0)
-  startedAt        DateTime  @default(now())
+  xpEarned         Int           @default(0)
+  hintCount        Int           @default(0) // tổng số lần dùng hint trong session
+  startedAt        DateTime      @default(now())
   endedAt          DateTime?
 
-  user             User      @relation(fields: [userId], references: [id])
-  scene            Scene     @relation(fields: [sceneId], references: [id])
-  messages         Message[]
+  user     User      @relation(fields: [userId], references: [id])
+  scene    Scene     @relation(fields: [sceneId], references: [id])
+  messages Message[]
 
+  @@index([userId])
+  @@index([sceneId])
+  @@index([userId, status])
   @@map("sessions")
 }
 
 model Message {
-  id           String   @id @default(uuid())
-  sessionId    String
-  role         String                           // "user" | "ai"
-  content      String
-  turnIndex    Int
-  feedbackData Json?                            // FeedbackData object
-  createdAt    DateTime @default(now())
+  id        String      @id @default(uuid())
+  sessionId String
+  role      MessageRole
+  content   String      @db.Text
+  turnIndex Int
 
-  session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  // Feedback — tách cột riêng thay vì JSON blob để dễ query & thống kê lỗi
+  hasError       Boolean?
+  errorType      ErrorType?
+  originalPhrase String?
+  suggestion     String?
+  explanation    String? // giải thích tiếng Việt, tối đa ~15 từ
+  isGood         Boolean?
+  isHint         Boolean    @default(false) // true nếu là tin nhắn hint từ AI
 
+  createdAt DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([sessionId, turnIndex])
   @@map("messages")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MISSIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
 model DailyMission {
-  id          String  @id @default(uuid())
+  id          String      @id @default(uuid())
   title       String
   description String
-  missionType String  // complete_scene | achieve_score | streak
-  targetValue Int
-  xpReward    Int     @default(50)
-  isActive    Boolean @default(true)
+  missionType MissionType
+  targetValue Int // ngưỡng cần đạt (vd: 1 scene, điểm 80, 3 ngày streak)
+  xpReward    Int         @default(50)
+  isActive    Boolean     @default(true)
 
   userMissions UserMission[]
 
@@ -108,16 +162,132 @@ model DailyMission {
 }
 
 model UserMission {
-  id          String    @id @default(uuid())
-  userId      String
-  missionId   String
-  date        String    // "2025-03-23"
-  isCompleted Boolean   @default(false)
-  completedAt DateTime?
+  id           String    @id @default(uuid())
+  userId       String
+  missionId    String
+  date         String // "YYYY-MM-DD" dạng String tránh timezone edge case
+  currentValue Int       @default(0) // tiến độ hiện tại hướng tới targetValue
+  isCompleted  Boolean   @default(false)
+  completedAt  DateTime?
 
-  user        User         @relation(fields: [userId], references: [id])
-  mission     DailyMission @relation(fields: [missionId], references: [id])
+  user    User         @relation(fields: [userId], references: [id])
+  mission DailyMission @relation(fields: [missionId], references: [id])
 
   @@unique([userId, missionId, date])
+  @@index([userId, date])
   @@map("user_missions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BADGES / ACHIEVEMENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Badge {
+  id             String        @id @default(uuid())
+  title          String
+  description    String
+  iconKey        String // key để Flutter map sang icon widget phía client
+  conditionType  ConditionType
+  conditionValue Int // ngưỡng đạt được badge
+  xpReward       Int           @default(0)
+  isActive       Boolean       @default(true)
+
+  userBadges UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id       String   @id @default(uuid())
+  userId   String
+  badgeId  String
+  earnedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id])
+  badge Badge @relation(fields: [badgeId], references: [id])
+
+  @@unique([userId, badgeId]) // mỗi badge chỉ earn 1 lần
+  @@index([userId])
+  @@map("user_badges")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USER VOCABULARY (Flashcard cá nhân)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model UserVocabulary {
+  id String @id @default(uuid())
+
+  userId String
+
+  // Một trong hai nguồn:
+  // 1. Từ lưu từ danh sách vocab của kịch bản → có sceneVocabularyId
+  // 2. Từ xuất hiện trong hội thoại, không có trong vocab list → chỉ có word/definition
+  sceneVocabularyId String? // nullable
+  word              String? // nullable — chỉ dùng khi không có sceneVocabularyId
+  definition        String? // nullable — chỉ dùng khi không có sceneVocabularyId
+
+  sourceSessionId String? // session nào sinh ra từ này (hiển thị context cho user)
+  isMastered      Boolean   @default(false)
+  savedAt         DateTime  @default(now())
+  reviewedAt      DateTime?
+
+  user            User             @relation(fields: [userId], references: [id])
+  sceneVocabulary SceneVocabulary? @relation(fields: [sceneVocabularyId], references: [id])
+
+  @@unique([userId, sceneVocabularyId]) // tránh lưu trùng từ cùng 1 kịch bản
+  @@index([userId])
+  @@index([userId, isMastered])
+  @@map("user_vocabulary")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Level {
+  A1
+  A2
+  B1
+  B2
+}
+
+enum SceneCategory {
+  WORK
+  TRAVEL
+  DAILY
+  SOCIAL
+}
+
+enum SessionStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+enum MessageRole {
+  USER
+  AI
+}
+
+enum ErrorType {
+  GRAMMAR
+  NATURALNESS
+  VOCABULARY
+}
+
+enum MissionType {
+  COMPLETE_SCENE // hoàn thành X kịch bản
+  ACHIEVE_SCORE // đạt điểm >= X trong 1 session
+  MAINTAIN_STREAK // duy trì streak X ngày
+  SAVE_VOCABULARY // lưu X từ vựng mới
+}
+
+enum ConditionType {
+  SCENES_COMPLETED // tổng số scene đã hoàn thành >= conditionValue
+  STREAK_DAYS // streak liên tục >= conditionValue ngày
+  HIGH_SCORE // đạt điểm >= conditionValue ít nhất 1 lần
+  VOCAB_SAVED // tổng từ đã lưu >= conditionValue
+  FIRST_SESSION // hoàn thành session đầu tiên (conditionValue = 1)
+  PERFECT_SCORE // đạt 100 điểm (conditionValue = 100)
 }

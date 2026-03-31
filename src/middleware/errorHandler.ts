@@ -7,7 +7,6 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
   const message = err.message || 'Đã xảy ra lỗi không xác định';
   const details = err.details || null;
 
-  // Xử lý các lỗi phổ biến ở đây (ví dụ: jwt, prisma, v.v.)
   if (err.name === 'JsonWebTokenError') {
     return fail(res, 'Token không hợp lệ', 'UNAUTHORIZED', 401);
   }
@@ -15,6 +14,5 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
     return fail(res, 'Token đã hết hạn', 'UNAUTHORIZED', 401);
   }
 
-  // Fallback về format chuẩn
   fail(res, message, code, status, details);
 };
