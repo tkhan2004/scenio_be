@@ -11,8 +11,19 @@ export async function findUserByEmail(email: string) {
   return await prisma.user.findUnique({ where: { email } });
 }
 
+export async function findUserByGoogleId(googleId: string) {
+  return await prisma.user.findUnique({ where: { googleId } });
+}
+
 export async function createUser(data: any) {
   return await prisma.user.create({ data });
+}
+
+export async function updateUserById(id: string, data: any) {
+  return await prisma.user.update({
+    where: { id },
+    data,
+  });
 }
 
 // --- RefreshToken Operations ---

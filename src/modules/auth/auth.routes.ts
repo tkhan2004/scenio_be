@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import * as authController from './auth.controller';
 import { validate } from '../../middleware/validate';
-import { registerSchema, loginSchema } from '../../schemas/auth';
+import { registerSchema, loginSchema, googleLoginSchema } from '../../schemas/auth';
 
 const router = Router();
 
@@ -16,6 +16,12 @@ router.post('/register', validate(registerSchema), authController.register);
  * @desc    Đăng nhập lấy AccessToken + RefreshToken
  */
 router.post('/login', validate(loginSchema), authController.login);
+
+/**
+ * @route   POST /api/auth/google
+ * @desc    Đăng nhập/đăng ký bằng Google ID Token
+ */
+router.post('/google', validate(googleLoginSchema), authController.googleLogin);
 
 /**
  * @route   POST /api/auth/refresh

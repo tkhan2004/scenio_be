@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ok, fail } from '../../utils/response';
 import * as authService from './auth.service';
-import { RegisterInput, LoginInput } from '../../schemas/auth';
+import { RegisterInput, LoginInput, GoogleLoginInput } from '../../schemas/auth';
 
 /**
  * HTTP Handler - register
@@ -28,6 +28,21 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
   try {
     const input = (req as any).validatedBody as LoginInput;
     const result = await authService.login(input);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - googleLogin
+ * Summary: Đăng nhập/đăng ký bằng Google ID token.
+ * Inputs: body.idToken.
+ */
+export const googleLogin = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const input = (req as any).validatedBody as GoogleLoginInput;
+    const result = await authService.loginWithGoogle(input.idToken);
     ok(res, result);
   } catch (error) {
     next(error);
