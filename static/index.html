@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scenio API UI Test</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --muted: #94a3b8;
+        --text: #e2e8f0;
+        --accent: #38bdf8;
+        --success: #22c55e;
+        --danger: #ef4444;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top, #1e293b, var(--bg));
+        color: var(--text);
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1 { margin: 0 0 8px; font-size: 28px; }
+      .sub { color: var(--muted); margin-bottom: 20px; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 16px;
+      }
+      .card {
+        background: rgba(17, 24, 39, 0.9);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 14px;
+        padding: 14px;
+      }
+      .card h2 {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+      label {
+        display: block;
+        margin: 10px 0 4px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      input, textarea, select {
+        width: 100%;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: #020617;
+        color: var(--text);
+        border-radius: 10px;
+        padding: 9px 10px;
+        font-size: 14px;
+      }
+      textarea { min-height: 92px; resize: vertical; }
+      button {
+        margin-top: 10px;
+        width: 100%;
+        border: none;
+        border-radius: 10px;
+        background: linear-gradient(90deg, #0ea5e9, var(--accent));
+        color: #00111b;
+        font-weight: 700;
+        cursor: pointer;
+        padding: 10px 12px;
+      }
+      .row { display: flex; gap: 8px; }
+      .status {
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .status b.ok { color: var(--success); }
+      .status b.err { color: var(--danger); }
+      .output {
+        margin-top: 16px;
+        background: #020617;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 12px;
+        padding: 12px;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+        line-height: 1.45;
+        color: #cbd5e1;
+      }
+      .small { font-size: 12px; color: var(--muted); }
+      .chip {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        color: #bae6fd;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Scenio API UI Test</h1>
+      <div class="sub">Dùng trang này để test nhanh backend auth flow, sau này có thể reuse làm blueprint UI.</div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="row">
+          <div style="flex:1;">
+            <label>Base URL</label>
+            <input id="baseUrl" value="http://localhost:3000/api" />
+          </div>
+          <div style="width:140px;">
+            <label>&nbsp;</label>
+            <button id="btnHealth">Health Check</button>
+          </div>
+        </div>
+        <div class="status">
+          Access Token: <span id="accessTokenState" class="chip">empty</span>
+          &nbsp;|&nbsp;
+          Refresh Token: <span id="refreshTokenState" class="chip">empty</span>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h2>1) Register</h2>
+          <label>Email</label>
+          <input id="registerEmail" placeholder="user@example.com" />
+          <label>Password</label>
+          <input id="registerPassword" type="password" placeholder="******" />
+          <label>Display Name</label>
+          <input id="registerDisplayName" placeholder="Thanh Khang" />
+          <button id="btnRegister">POST /auth/register</button>
+        </div>
+
+        <div class="card">
+          <h2>2) Login</h2>
+          <label>Email</label>
+          <input id="loginEmail" placeholder="user@example.com" />
+          <label>Password</label>
+          <input id="loginPassword" type="password" placeholder="******" />
+          <button id="btnLogin">POST /auth/login</button>
+        </div>
+
+        <div class="card">
+          <h2>3) Google Login</h2>
+          <label>Google ID Token (JWT)</label>
+          <textarea id="googleIdToken" placeholder="eyJhbGciOiJSUzI1NiIs..."></textarea>
+          <div class="small">Không dùng API key `AIza...`; cần idToken của user Google.</div>
+          <button id="btnGoogle">POST /auth/google</button>
+        </div>
+
+        <div class="card">
+          <h2>4) Refresh</h2>
+          <label>Refresh Token</label>
+          <textarea id="refreshTokenInput" placeholder="tự điền từ login hoặc paste tay"></textarea>
+          <button id="btnRefresh">POST /auth/refresh</button>
+        </div>
+
+        <div class="card">
+          <h2>5) Logout</h2>
+          <label>Refresh Token</label>
+          <textarea id="logoutTokenInput" placeholder="tự điền từ login hoặc paste tay"></textarea>
+          <button id="btnLogout">POST /auth/logout</button>
+        </div>
+
+        <div class="card">
+          <h2>Custom Request</h2>
+          <div class="row">
+            <div style="width:120px;">
+              <label>Method</label>
+              <select id="customMethod">
+                <option>GET</option>
+                <option>POST</option>
+                <option>PATCH</option>
+                <option>PUT</option>
+                <option>DELETE</option>
+              </select>
+            </div>
+            <div style="flex:1;">
+              <label>Path</label>
+              <input id="customPath" placeholder="/auth/login" />
+            </div>
+          </div>
+          <label>Body JSON</label>
+          <textarea id="customBody" placeholder='{"email":"...","password":"..."}'></textarea>
+          <label><input id="customUseAuth" type="checkbox" style="width:auto;" /> Gắn Authorization Bearer accessToken</label>
+          <button id="btnCustom">Send Custom API</button>
+        </div>
+      </div>
+
+      <div class="output">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <strong>Response</strong>
+          <span id="httpStatus" class="chip">--</span>
+        </div>
+        <pre id="outputText">{ "message": "Ready to test API" }</pre>
+      </div>
+    </div>
+
+    <script>
+      const state = { accessToken: "", refreshToken: "" };
+
+      const el = (id) => document.getElementById(id);
+      const baseUrl = () => (el("baseUrl").value || "").replace(/\/$/, "");
+
+      function syncTokenUI() {
+        el("accessTokenState").textContent = state.accessToken ? "set" : "empty";
+        el("refreshTokenState").textContent = state.refreshToken ? "set" : "empty";
+        if (state.refreshToken) {
+          el("refreshTokenInput").value = state.refreshToken;
+          el("logoutTokenInput").value = state.refreshToken;
+        }
+      }
+
+      function printResponse(status, data) {
+        el("httpStatus").textContent = status;
+        el("outputText").textContent = JSON.stringify(data, null, 2);
+      }
+
+      async function callApi(path, options = {}) {
+        const res = await fetch(`${baseUrl()}${path}`, options);
+        let data = null;
+        try { data = await res.json(); } catch { data = { raw: "No JSON response" }; }
+        printResponse(res.status, data);
+        return { res, data };
+      }
+
+      function saveTokensFrom(data) {
+        const accessToken = data?.data?.accessToken;
+        const refreshToken = data?.data?.refreshToken;
+        if (accessToken) state.accessToken = accessToken;
+        if (refreshToken) state.refreshToken = refreshToken;
+        syncTokenUI();
+      }
+
+      el("btnHealth").onclick = async () => {
+        const res = await fetch(`${baseUrl()}/health`);
+        const data = await res.json();
+        printResponse(res.status, data);
+      };
+
+      el("btnRegister").onclick = async () => {
+        const body = {
+          email: el("registerEmail").value,
+          password: el("registerPassword").value,
+          displayName: el("registerDisplayName").value || undefined
+        };
+        const { data } = await callApi("/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        saveTokensFrom(data);
+      };
+
+      el("btnLogin").onclick = async () => {
+        const body = {
+          email: el("loginEmail").value,
+          password: el("loginPassword").value
+        };
+        const { data } = await callApi("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        saveTokensFrom(data);
+      };
+
+      el("btnGoogle").onclick = async () => {
+        const body = { idToken: el("googleIdToken").value.trim() };
+        const { data } = await callApi("/auth/google", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        saveTokensFrom(data);
+      };
+
+      el("btnRefresh").onclick = async () => {
+        const body = { refreshToken: el("refreshTokenInput").value.trim() || state.refreshToken };
+        const { data } = await callApi("/auth/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const accessToken = data?.data?.accessToken;
+        if (accessToken) {
+          state.accessToken = accessToken;
+          syncTokenUI();
+        }
+      };
+
+      el("btnLogout").onclick = async () => {
+        const body = { refreshToken: el("logoutTokenInput").value.trim() || state.refreshToken };
+        await callApi("/auth/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        state.accessToken = "";
+        state.refreshToken = "";
+        syncTokenUI();
+      };
+
+      el("btnCustom").onclick = async () => {
+        const method = el("customMethod").value;
+        const path = el("customPath").value.trim();
+        const bodyText = el("customBody").value.trim();
+        const headers = { "Content-Type": "application/json" };
+        if (el("customUseAuth").checked && state.accessToken) {
+          headers.Authorization = `Bearer ${state.accessToken}`;
+        }
+
+        const options = { method, headers };
+        if (!["GET", "DELETE"].includes(method)) {
+          options.body = bodyText ? bodyText : "{}";
+        }
+        await callApi(path.startsWith("/") ? path : `/${path}`, options);
+      };
+
+      syncTokenUI();
+    </script>
+  </body>
+</html>
