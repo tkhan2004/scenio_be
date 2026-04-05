@@ -4,7 +4,8 @@
   "description": "Scenio — Language Learning App Backend API",
   "main": "dist/src/server.js",
   "scripts": {
-    "dev": "nodemon src/server.ts",
+    "predev": "prisma generate",
+    "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/src/server.js",
     "db:migrate": "prisma migrate dev",
@@ -49,6 +50,6 @@
       "src"
     ],
     "ext": "ts,json",
-    "exec": "ts-node src/server.ts"
+    "exec": "ts-node --files src/server.ts"
   }
 }

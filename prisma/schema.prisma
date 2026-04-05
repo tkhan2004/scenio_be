@@ -23,6 +23,12 @@ model User {
   displayName    String?
   avatarUrl      String?
   level          Level     @default(A2)
+  learningGoal   String?
+  studyFrequency String?
+  selfAssessment String?
+  needsLevelTest Boolean   @default(true)
+  levelTestedAt  DateTime?
+  onboardingCompletedAt DateTime?
   totalXp        Int       @default(0)
   streakDays     Int       @default(0)
   lastActiveDate DateTime? @db.Date // DATE thay vì timestamp để tính streak dễ hơn

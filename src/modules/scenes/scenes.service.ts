@@ -4,7 +4,12 @@ import { ListScenesQuery, SearchScenesQuery } from '../../schemas/scenes';
 
 type SceneCard = scenesRepo.SceneCardRecord;
 type SearchScene = scenesRepo.SearchSceneRecord;
+type SceneDetail = scenesRepo.SceneDetailRecord;
 
+/**
+ * Helper - mapSceneCard
+ * Summary: Chuẩn hóa record từ repository thành scene card trả cho client.
+ */
 function mapSceneCard(scene: SceneCard | SearchScene) {
   return {
     id: scene.id,
@@ -18,21 +23,55 @@ function mapSceneCard(scene: SceneCard | SearchScene) {
   };
 }
 
+/**
+ * Helper - mapSceneDetail
+ * Summary: Chuẩn hóa record scene detail thành payload đầy đủ cho scene detail screen.
+ */
+function mapSceneDetail(scene: SceneDetail) {
+  return {
+    id: scene.id,
+    title: scene.title,
+    category: scene.category,
+    description: scene.description,
+    missionText: scene.missionText,
+    difficulty: scene.difficulty,
+    estimatedMinutes: scene.estimatedMinutes,
+    characterName: scene.characterName,
+    characterRole: scene.characterRole,
+    vocabulary: scene.vocabulary.map((item) => ({
+      id: item.id,
+      word: item.word,
+      definition: item.definition,
+      example: item.example,
+      sortOrder: item.sortOrder,
+    })),
+  };
+}
+
+/**
+ * Helper - getAllowedLevels
+ * Summary: Giới hạn phạm vi level mà user được phép thấy khi search.
+ * Notes: User level cao hơn có thể thấy các scene level thấp hơn.
+ */
 function getAllowedLevels(userLevel: Level) {
   const order: Level[] = [Level.A1, Level.A2, Level.B1, Level.B2];
   const index = order.indexOf(userLevel);
   return index >= 0 ? order.slice(0, index + 1) : order;
 }
 
+/**
+ * Helper - normalize
+ * Summary: Chuẩn hóa text để tính điểm tìm kiếm text-based.
+ */
 function normalize(text: string) {
   return text.toLowerCase().trim();
 }
 
-function includesText(text: string | null | undefined, query: string) {
-  if (!text) return false;
-  return normalize(text).includes(query);
-}
-
+/**
+ * Helper - scoreScene
+ * Summary: Chấm điểm mức độ liên quan của scene với từ khóa tìm kiếm.
+ * Notes: Đây là text ranking nội bộ, chưa phải vector search.
+ */
 function scoreScene(scene: SearchScene, rawQuery: string) {
   const query = normalize(rawQuery);
   const terms = query.split(/\s+/).filter(Boolean);
@@ -68,6 +107,13 @@ function scoreScene(scene: SearchScene, rawQuery: string) {
   return score;
 }
 
+/**
+ * Function Objective - listScenes
+ * Summary: Lấy danh sách scene active theo filter và phân trang.
+ * Inputs: Query đã validate từ schema scenes.
+ * Behavior: Build where clause -> count tổng -> lấy page hiện tại -> chuẩn hóa response.
+ * Returns: Danh sách scene card cùng total, page, limit.
+ */
 export async function listScenes(query: ListScenesQuery) {
   const where: Prisma.SceneWhereInput = {
     isActive: true,
@@ -95,6 +141,13 @@ export async function listScenes(query: ListScenesQuery) {
   };
 }
 
+/**
+ * Function Objective - searchScenes
+ * Summary: Tìm scene theo từ khóa cho user hiện tại.
+ * Inputs: userId và query đã validate.
+ * Behavior: Lấy level user -> query candidate scenes -> text ranking -> cắt theo limit.
+ * Returns: Danh sách scene card phù hợp với từ khóa.
+ */
 export async function searchScenes(userId: string, query: SearchScenesQuery) {
   const user = await scenesRepo.findUserLevel(userId);
   if (!user) {
@@ -119,4 +172,25 @@ export async function searchScenes(userId: string, query: SearchScenesQuery) {
     .map((item) => mapSceneCard(item.scene));
 
   return { scenes };
+}
+
+/**
+ * Function Objective - getSceneById
+ * Summary: Lấy chi tiết đầy đủ của một scene active để hiển thị màn hình scene detail.
+ * Inputs: sceneId đã qua validate từ params.
+ * Behavior: Query scene active theo id -> throw nếu không tồn tại -> chuẩn hóa payload.
+ * Returns: Scene detail gồm metadata, missionText, character info và vocabulary list.
+ */
+export async function getSceneById(sceneId: string) {
+  const scene = await scenesRepo.findActiveSceneById(sceneId);
+  if (!scene) {
+    throw Object.assign(new Error('Kịch bản không tồn tại'), {
+      code: 'SCENE_NOT_FOUND',
+      status: 404,
+    });
+  }
+
+  return {
+    scene: mapSceneDetail(scene),
+  };
 }
