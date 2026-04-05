@@ -1,178 +1,886 @@
 <!doctype html>
 <html lang="vi">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Scenio API UI Test</title>
-    <style>
-      :root {
-        --bg: #0f172a;
-        --panel: #111827;
-        --muted: #94a3b8;
-        --text: #e2e8f0;
-        --accent: #38bdf8;
-        --success: #22c55e;
-        --danger: #ef4444;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: radial-gradient(circle at top, #1e293b, var(--bg));
-        color: var(--text);
-      }
-      .wrap {
-        max-width: 1100px;
-        margin: 0 auto;
-        padding: 24px;
-      }
-      h1 { margin: 0 0 8px; font-size: 28px; }
-      .sub { color: var(--muted); margin-bottom: 20px; }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-        gap: 16px;
-      }
-      .card {
-        background: rgba(17, 24, 39, 0.9);
-        border: 1px solid rgba(148, 163, 184, 0.25);
-        border-radius: 14px;
-        padding: 14px;
-      }
-      .card h2 {
-        margin: 0 0 12px;
-        font-size: 16px;
-      }
-      label {
-        display: block;
-        margin: 10px 0 4px;
-        font-size: 12px;
-        color: var(--muted);
-      }
-      input, textarea, select {
-        width: 100%;
-        border: 1px solid rgba(148, 163, 184, 0.4);
-        background: #020617;
-        color: var(--text);
-        border-radius: 10px;
-        padding: 9px 10px;
-        font-size: 14px;
-      }
-      textarea { min-height: 92px; resize: vertical; }
-      button {
-        margin-top: 10px;
-        width: 100%;
-        border: none;
-        border-radius: 10px;
-        background: linear-gradient(90deg, #0ea5e9, var(--accent));
-        color: #00111b;
-        font-weight: 700;
-        cursor: pointer;
-        padding: 10px 12px;
-      }
-      .row { display: flex; gap: 8px; }
-      .status {
-        margin-top: 12px;
-        font-size: 13px;
-        color: var(--muted);
-      }
-      .status b.ok { color: var(--success); }
-      .status b.err { color: var(--danger); }
-      .output {
-        margin-top: 16px;
-        background: #020617;
-        border: 1px solid rgba(148, 163, 184, 0.25);
-        border-radius: 12px;
-        padding: 12px;
-      }
-      pre {
-        white-space: pre-wrap;
-        word-break: break-word;
-        margin: 0;
-        line-height: 1.45;
-        color: #cbd5e1;
-      }
-      .small { font-size: 12px; color: var(--muted); }
-      .chip {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 999px;
-        font-size: 12px;
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        color: #bae6fd;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <h1>Scenio API UI Test</h1>
-      <div class="sub">Dùng trang này để test nhanh backend auth flow, sau này có thể reuse làm blueprint UI.</div>
 
-      <div class="card" style="margin-bottom:16px;">
-        <div class="row">
-          <div style="flex:1;">
-            <label>Base URL</label>
-            <input id="baseUrl" value="http://localhost:3000/api" />
-          </div>
-          <div style="width:140px;">
-            <label>&nbsp;</label>
-            <button id="btnHealth">Health Check</button>
-          </div>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scenio — API Test Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #080d14;
+      --surface: #0f1623;
+      --card: #141e2e;
+      --border: rgba(99, 130, 175, 0.18);
+      --muted: #5a7394;
+      --text: #cdd9ea;
+      --white: #e8f0fc;
+      --accent: #3d8bfe;
+      --accent2: #7c5cfc;
+      --success: #22c55e;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --tag-bg: rgba(61, 139, 254, 0.12);
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ─────────────────────────────────── */
+    .header {
+      background: linear-gradient(135deg, #0a1628 0%, #0f1e3a 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      height: 60px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--white);
+      text-decoration: none;
+    }
+
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .header-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .token-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      cursor: default;
+    }
+
+    .token-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background .3s;
+    }
+
+    .token-dot.active {
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+    }
+
+    .base-url-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .base-url-wrap input {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      padding: 5px 10px;
+      width: 220px;
+    }
+
+    .btn-sm {
+      background: var(--tag-bg);
+      border: 1px solid rgba(61, 139, 254, .3);
+      color: var(--accent);
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 12px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+
+    .btn-sm:hover {
+      background: rgba(61, 139, 254, .22);
+    }
+
+    /* ── Layout ─────────────────────────────────── */
+    .layout {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* ── Sidebar / Tabs ─────────────────────────── */
+    .sidebar {
+      width: 200px;
+      min-width: 200px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 16px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .sidebar-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: 10px 16px 4px;
+    }
+
+    .tab-btn {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      border: none;
+      background: none;
+      cursor: pointer;
+      border-left: 2px solid transparent;
+      transition: all .15s;
+      text-align: left;
+      width: 100%;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, .03);
+    }
+
+    .tab-btn.active {
+      color: var(--white);
+      background: rgba(61, 139, 254, .1);
+      border-left-color: var(--accent);
+    }
+
+    .tab-icon {
+      font-size: 15px;
+      opacity: .85;
+    }
+
+    .method-tag {
+      margin-left: auto;
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .get {
+      background: rgba(34, 197, 94, .15);
+      color: #4ade80;
+    }
+
+    .post {
+      background: rgba(61, 139, 254, .15);
+      color: #60a5fa;
+    }
+
+    .patc {
+      background: rgba(124, 92, 252, .15);
+      color: #a78bfa;
+    }
+
+    /* ── Main Content ────────────────────────────── */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .panel {
+      display: none;
+      flex-direction: column;
+      gap: 20px;
+      padding: 24px;
+      flex: 1;
+      animation: fadeIn .2s ease;
+    }
+
+    .panel.active {
+      display: flex;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--white);
+    }
+
+    .panel-title small {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+      margin-left: 4px;
+    }
+
+    .endpoint-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      background: var(--tag-bg);
+      border: 1px solid rgba(61, 139, 254, .25);
+      color: var(--accent);
+      border-radius: 6px;
+      padding: 2px 8px;
+    }
+
+    /* ── Cards ───────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--white);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ── Form elements ───────────────────────────── */
+    .field {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 5px;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius-sm);
+      padding: 9px 12px;
+      font-size: 13px;
+      font-family: inherit;
+      transition: border-color .2s;
+      outline: none;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      border-color: rgba(61, 139, 254, .5);
+      box-shadow: 0 0 0 3px rgba(61, 139, 254, .08);
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+      color: #3d5270;
+    }
+
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+
+    select option {
+      background: var(--card);
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .row>* {
+      flex: 1;
+    }
+
+    .row>.w120 {
+      flex: none;
+      width: 120px;
+    }
+
+    .row>.w160 {
+      flex: none;
+      width: 160px;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text);
+      margin-top: 4px;
+    }
+
+    .checkbox-row input[type=checkbox] {
+      width: auto;
+      accent-color: var(--accent);
+    }
+
+    /* ── Buttons ─────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 10px 18px;
+      transition: all .2s;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #2563eb);
+      color: #fff;
+      width: 100%;
+      margin-top: 8px;
+    }
+
+    .btn-primary:hover {
+      opacity: .9;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(61, 139, 254, .3);
+    }
+
+    .btn-primary:active {
+      transform: none;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+
+    .btn-ghost:hover {
+      color: var(--text);
+      border-color: rgba(99, 130, 175, .4);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, .12);
+      border: 1px solid rgba(239, 68, 68, .25);
+      color: #fca5a5;
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, .2);
+    }
+
+    /* ── Response panel ─────────────────────────── */
+    .response-wrap {
+      position: sticky;
+      bottom: 0;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      padding: 0;
+    }
+
+    .response-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .response-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--white);
+    }
+
+    .status-chip {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 10px;
+      border-radius: 20px;
+      border: 1px solid;
+    }
+
+    .status-chip.ok {
+      color: var(--success);
+      border-color: rgba(34, 197, 94, .3);
+      background: rgba(34, 197, 94, .08);
+    }
+
+    .status-chip.err {
+      color: var(--danger);
+      border-color: rgba(239, 68, 68, .3);
+      background: rgba(239, 68, 68, .08);
+    }
+
+    .status-chip.neu {
+      color: var(--muted);
+      border-color: var(--border);
+    }
+
+    .response-timing {
+      margin-left: auto;
+      font-size: 11px;
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .response-body {
+      padding: 16px 24px;
+      max-height: 340px;
+      overflow-y: auto;
+    }
+
+    pre#outputText {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: #93b4d8;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .copy-btn {
+      margin-left: auto;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 6px;
+      font-size: 11px;
+      padding: 3px 10px;
+      cursor: pointer;
+    }
+
+    .copy-btn:hover {
+      color: var(--text);
+    }
+
+    /* ── Divider ─────────────────────────────────── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 4px 0;
+    }
+
+    /* ── Info box ────────────────────────────────── */
+    .info-box {
+      background: rgba(61, 139, 254, .07);
+      border: 1px solid rgba(61, 139, 254, .2);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #93b4d8;
+      display: flex;
+      gap: 8px;
+    }
+
+    /* ── Scrollbar ────────────────────────────────── */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(99, 130, 175, .25);
+      border-radius: 99px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ══ HEADER ══════════════════════════════════════ -->
+  <header class="header">
+    <a class="logo" href="#">
+      <div class="logo-icon">🎭</div>
+      Scenio
+    </a>
+    <span style="color:var(--muted);font-size:13px;">API Test Console</span>
+
+    <div class="base-url-wrap" style="margin-left:24px;">
+      <input id="baseUrl" value="http://localhost:3000/api" style="width:240px;" />
+      <button class="btn-sm" id="btnHealth">⚡ Health</button>
+    </div>
+
+    <div class="header-right">
+      <div class="token-badge" title="Access Token status">
+        <div class="token-dot" id="dotAccess"></div>
+        Access Token: <span id="accessLabel" style="color:var(--text)">–</span>
+      </div>
+      <div class="token-badge" title="Refresh Token status">
+        <div class="token-dot" id="dotRefresh"></div>
+        Refresh:&nbsp;<span id="refreshLabel" style="color:var(--text)">–</span>
+      </div>
+      <button class="btn btn-danger" id="btnClearTokens" style="margin:0;padding:5px 12px;font-size:11px;">✕ Clear
+        tokens</button>
+    </div>
+  </header>
+
+  <!-- ══ LAYOUT ══════════════════════════════════════ -->
+  <div class="layout">
+
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="sidebar-label">Auth</div>
+      <button class="tab-btn active" data-tab="register"><span class="tab-icon">📝</span> Register <span
+          class="method-tag post">POST</span></button>
+      <button class="tab-btn" data-tab="login"><span class="tab-icon">🔑</span> Login <span
+          class="method-tag post">POST</span></button>
+      <button class="tab-btn" data-tab="google"><span class="tab-icon">🌐</span> Google <span
+          class="method-tag post">POST</span></button>
+      <button class="tab-btn" data-tab="refresh"><span class="tab-icon">🔄</span> Refresh <span
+          class="method-tag post">POST</span></button>
+      <button class="tab-btn" data-tab="logout"><span class="tab-icon">🚪</span> Logout <span
+          class="method-tag post">POST</span></button>
+      <button class="tab-btn" data-tab="verify"><span class="tab-icon">✅</span> Verify Token <span
+          class="method-tag get">GET</span></button>
+
+      <hr class="divider" style="margin:8px 16px;" />
+      <div class="sidebar-label">Home</div>
+      <button class="tab-btn" data-tab="dashboard"><span class="tab-icon">🏠</span> Dashboard <span
+          class="method-tag get">GET</span></button>
+
+      <hr class="divider" style="margin:8px 16px;" />
+      <div class="sidebar-label">Scenes</div>
+      <button class="tab-btn" data-tab="sceneList"><span class="tab-icon">🎬</span> List Scenes <span
+          class="method-tag get">GET</span></button>
+      <button class="tab-btn" data-tab="sceneSearch"><span class="tab-icon">🔍</span> Search <span
+          class="method-tag get">GET</span></button>
+      <button class="tab-btn" data-tab="sceneDetail"><span class="tab-icon">📄</span> Scene Detail <span
+          class="method-tag get">GET</span></button>
+
+      <hr class="divider" style="margin:8px 16px;" />
+      <div class="sidebar-label">Sessions</div>
+      <button class="tab-btn" data-tab="levelTest"><span class="tab-icon">🧪</span> Level Test <span
+          class="method-tag post">POST</span></button>
+
+      <hr class="divider" style="margin:8px 16px;" />
+      <div class="sidebar-label">Users</div>
+      <button class="tab-btn" data-tab="getMe"><span class="tab-icon">👤</span> Get Me <span
+          class="method-tag get">GET</span></button>
+      <button class="tab-btn" data-tab="updateMe"><span class="tab-icon">✏️</span> Update Me <span
+          class="method-tag patc">PATCH</span></button>
+      <button class="tab-btn" data-tab="onboarding"><span class="tab-icon">🚀</span> Onboarding <span
+          class="method-tag patc">PATCH</span></button>
+
+      <hr class="divider" style="margin:8px 16px;" />
+      <div class="sidebar-label">Custom</div>
+      <button class="tab-btn" data-tab="custom"><span class="tab-icon">⚙️</span> Raw Request</button>
+    </nav>
+
+    <!-- Main -->
+    <div class="main">
+
+      <!-- ── REGISTER ──────────────────────────── -->
+      <div class="panel active" id="panel-register">
+        <div class="panel-title">📝 Register <small>/</small> <span class="endpoint-badge">POST /auth/register</span>
         </div>
-        <div class="status">
-          Access Token: <span id="accessTokenState" class="chip">empty</span>
-          &nbsp;|&nbsp;
-          Refresh Token: <span id="refreshTokenState" class="chip">empty</span>
+        <div class="card">
+          <div class="field"><label>Email</label><input id="reg-email" placeholder="user@example.com" /></div>
+          <div class="field"><label>Password</label><input id="reg-pw" type="password" placeholder="Mật khẩu" /></div>
+          <div class="field"><label>Display Name</label><input id="reg-name" placeholder="Nguyễn Văn A" /></div>
+          <div class="field"><label>Avatar URL <span style="color:var(--muted);font-weight:400;">(tuỳ
+                chọn)</span></label><input id="reg-avatar" placeholder="https://..." /></div>
+          <button class="btn btn-primary" id="btnRegister">➤ POST /auth/register</button>
+        </div>
+        <div class="info-box">ℹ️ Response sẽ tự động lưu <code>accessToken</code> và <code>refreshToken</code> vào state
+          toàn cục.</div>
+      </div>
+
+      <!-- ── LOGIN ─────────────────────────────── -->
+      <div class="panel" id="panel-login">
+        <div class="panel-title">🔑 Login <small>/</small> <span class="endpoint-badge">POST /auth/login</span></div>
+        <div class="card">
+          <div class="field"><label>Email</label><input id="login-email" placeholder="user@example.com" /></div>
+          <div class="field"><label>Password</label><input id="login-pw" type="password" placeholder="Mật khẩu" /></div>
+          <button class="btn btn-primary" id="btnLogin">➤ POST /auth/login</button>
+        </div>
+        <div class="info-box">💡 Tài khoản seed: <code>learner@scenio.dev</code> / <code>123456</code> &nbsp;|&nbsp;
+          <code>admin@scenio.dev</code> / <code>123456</code></div>
+      </div>
+
+      <!-- ── GOOGLE ─────────────────────────────── -->
+      <div class="panel" id="panel-google">
+        <div class="panel-title">🌐 Google Login <small>/</small> <span class="endpoint-badge">POST /auth/google</span>
+        </div>
+        <div class="card">
+          <div class="field"><label>Google ID Token (idToken)</label><textarea id="googleIdToken"
+              placeholder="eyJhbGciOiJSUzI1NiIs..."></textarea></div>
+          <div class="info-box" style="margin-bottom:8px;">⚠️ Cần Google OAuth idToken của user — không phải API key
+            AIza...</div>
+          <button class="btn btn-primary" id="btnGoogle">➤ POST /auth/google</button>
         </div>
       </div>
 
-      <div class="grid">
+      <!-- ── REFRESH ─────────────────────────────── -->
+      <div class="panel" id="panel-refresh">
+        <div class="panel-title">🔄 Refresh Token <small>/</small> <span class="endpoint-badge">POST
+            /auth/refresh</span></div>
         <div class="card">
-          <h2>1) Register</h2>
-          <label>Email</label>
-          <input id="registerEmail" placeholder="user@example.com" />
-          <label>Password</label>
-          <input id="registerPassword" type="password" placeholder="******" />
-          <label>Display Name</label>
-          <input id="registerDisplayName" placeholder="Thanh Khang" />
-          <button id="btnRegister">POST /auth/register</button>
+          <div class="field"><label>Refresh Token (tự điền nếu không có trong state)</label><textarea
+              id="refresh-token-input" placeholder="Từ state hoặc dán thủ công..."></textarea></div>
+          <button class="btn btn-primary" id="btnRefresh">➤ POST /auth/refresh</button>
         </div>
+        <div class="info-box">ℹ️ Nếu ô trống, hệ thống dùng refreshToken đang lưu trong state toàn cục.</div>
+      </div>
 
+      <!-- ── LOGOUT ─────────────────────────────── -->
+      <div class="panel" id="panel-logout">
+        <div class="panel-title">🚪 Logout <small>/</small> <span class="endpoint-badge">POST /auth/logout</span></div>
         <div class="card">
-          <h2>2) Login</h2>
-          <label>Email</label>
-          <input id="loginEmail" placeholder="user@example.com" />
-          <label>Password</label>
-          <input id="loginPassword" type="password" placeholder="******" />
-          <button id="btnLogin">POST /auth/login</button>
+          <div class="field"><label>Refresh Token (tuỳ chọn)</label><textarea id="logout-token-input"
+              placeholder="Từ state..."></textarea></div>
+          <button class="btn btn-primary" id="btnLogout" style="background:linear-gradient(135deg,#ef4444,#b91c1c);">➤
+            POST /auth/logout</button>
         </div>
+      </div>
 
+      <!-- ── VERIFY TOKEN ────────────────────────── -->
+      <div class="panel" id="panel-verify">
+        <div class="panel-title">✅ Verify Token <small>/</small> <span class="endpoint-badge">GET
+            /auth/verify-token</span></div>
         <div class="card">
-          <h2>3) Google Login</h2>
-          <label>Google ID Token (JWT)</label>
-          <textarea id="googleIdToken" placeholder="eyJhbGciOiJSUzI1NiIs..."></textarea>
-          <div class="small">Không dùng API key `AIza...`; cần idToken của user Google.</div>
-          <button id="btnGoogle">POST /auth/google</button>
+          <div class="info-box" style="margin-bottom:12px;">🔐 Endpoint này yêu cầu Access Token hợp lệ trong state
+            (Authorization: Bearer ...)</div>
+          <button class="btn btn-primary" id="btnVerify">➤ GET /auth/verify-token</button>
         </div>
+      </div>
 
+      <!-- ── DASHBOARD ───────────────────────────── -->
+      <div class="panel" id="panel-dashboard">
+        <div class="panel-title">🏠 Home Dashboard <small>/</small> <span class="endpoint-badge">GET
+            /home/dashboard</span></div>
         <div class="card">
-          <h2>4) Refresh</h2>
-          <label>Refresh Token</label>
-          <textarea id="refreshTokenInput" placeholder="tự điền từ login hoặc paste tay"></textarea>
-          <button id="btnRefresh">POST /auth/refresh</button>
+          <div class="info-box" style="margin-bottom:12px;">🔐 Yêu cầu Access Token. Trả về missions, recommendedScenes,
+            inProgressSession của user đang đăng nhập.</div>
+          <button class="btn btn-primary" id="btnDashboard">➤ GET /home/dashboard</button>
         </div>
+      </div>
 
+      <!-- ── SCENE LIST ────────────────────────────── -->
+      <div class="panel" id="panel-sceneList">
+        <div class="panel-title">🎬 List Scenes <small>/</small> <span class="endpoint-badge">GET /scenes</span></div>
         <div class="card">
-          <h2>5) Logout</h2>
-          <label>Refresh Token</label>
-          <textarea id="logoutTokenInput" placeholder="tự điền từ login hoặc paste tay"></textarea>
-          <button id="btnLogout">POST /auth/logout</button>
-        </div>
-
-        <div class="card">
-          <h2>Custom Request</h2>
           <div class="row">
-            <div style="width:120px;">
+            <div class="field">
+              <label>Category <span style="color:var(--muted);font-weight:400;">(tuỳ chọn)</span></label>
+              <select id="scene-category">
+                <option value="">-- Tất cả --</option>
+                <option value="WORK">WORK</option>
+                <option value="TRAVEL">TRAVEL</option>
+                <option value="DAILY">DAILY</option>
+                <option value="SOCIAL">SOCIAL</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Difficulty <span style="color:var(--muted);font-weight:400;">(tuỳ chọn)</span></label>
+              <select id="scene-difficulty">
+                <option value="">-- Tất cả --</option>
+                <option value="A1">A1</option>
+                <option value="A2">A2</option>
+                <option value="B1">B1</option>
+                <option value="B2">B2</option>
+              </select>
+            </div>
+            <div class="field w120">
+              <label>Page</label>
+              <input id="scene-page" type="number" value="1" min="1" />
+            </div>
+          </div>
+          <button class="btn btn-primary" id="btnSceneList">➤ GET /scenes</button>
+        </div>
+      </div>
+
+      <!-- ── SCENE SEARCH ────────────────────────── -->
+      <div class="panel" id="panel-sceneSearch">
+        <div class="panel-title">🔍 Search Scenes <small>/</small> <span class="endpoint-badge">GET
+            /scenes/search</span></div>
+        <div class="card">
+          <div class="field"><label>Từ khoá tìm kiếm (q)</label><input id="scene-query"
+              placeholder="Ví dụ: job interview, airport check-in..." /></div>
+          <button class="btn btn-primary" id="btnSceneSearch">➤ GET /scenes/search?q=...</button>
+        </div>
+        <div class="info-box">🧠 Tìm kiếm vector semantic qua Chroma DB. Cần OpenAI API key và Chroma đang chạy.</div>
+      </div>
+
+      <!-- ── SCENE DETAIL ────────────────────────── -->
+      <div class="panel" id="panel-sceneDetail">
+        <div class="panel-title">📄 Scene Detail <small>/</small> <span class="endpoint-badge">GET /scenes/:id</span>
+        </div>
+        <div class="card">
+          <div class="field"><label>Scene ID (UUID)</label><input id="scene-id"
+              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></div>
+          <button class="btn btn-primary" id="btnSceneDetail">➤ GET /scenes/:id</button>
+        </div>
+      </div>
+
+      <!-- ── LEVEL TEST ────────────────────────────── -->
+      <div class="panel" id="panel-levelTest">
+        <div class="panel-title">🧪 Level Test <small>/</small> <span class="endpoint-badge">POST
+            /sessions/level-test</span></div>
+        <div class="card">
+          <div class="row">
+            <div class="field">
+              <label>Turn Index <span style="color:var(--muted);font-weight:400;">(0–4)</span></label>
+              <input id="lt-turn" type="number" value="0" min="0" max="4" />
+            </div>
+          </div>
+          <div class="field"><label>Message của user</label><textarea id="lt-message"
+              placeholder="Ví dụ: Hello, I am a student..."></textarea></div>
+          <div class="info-box" style="margin-bottom:8px;">🔐 Gửi từng lượt hội thoại. Lượt 0 → AI hỏi câu đầu. Lượt 4 →
+            AI trả về <code>isComplete: true</code> và <code>level</code>.</div>
+          <button class="btn btn-primary" id="btnLevelTest">➤ POST /sessions/level-test</button>
+        </div>
+      </div>
+
+      <!-- ── GET ME ─────────────────────────────────── -->
+      <div class="panel" id="panel-getMe">
+        <div class="panel-title">👤 Get Me <small>/</small> <span class="endpoint-badge">GET /users/me</span></div>
+        <div class="card">
+          <div class="info-box" style="margin-bottom:12px;">🔐 Trả về profile của user đang đăng nhập (level, XP,
+            streakDays, displayName...).</div>
+          <button class="btn btn-primary" id="btnGetMe">➤ GET /users/me</button>
+        </div>
+      </div>
+
+      <!-- ── UPDATE ME ──────────────────────────────── -->
+      <div class="panel" id="panel-updateMe">
+        <div class="panel-title">✏️ Update Me <small>/</small> <span class="endpoint-badge">PATCH /users/me</span></div>
+        <div class="card">
+          <div class="field"><label>Display Name <span style="color:var(--muted);font-weight:400;">(tuỳ
+                chọn)</span></label><input id="upd-name" placeholder="Tên hiển thị mới" /></div>
+          <div class="field"><label>Avatar URL <span style="color:var(--muted);font-weight:400;">(tuỳ
+                chọn)</span></label><input id="upd-avatar" placeholder="https://..." /></div>
+          <div class="info-box" style="margin-bottom:8px;">Chỉ gửi các field muốn thay đổi. Field nào để trống sẽ không
+            bị gửi.</div>
+          <button class="btn btn-primary" id="btnUpdateMe">➤ PATCH /users/me</button>
+        </div>
+      </div>
+
+      <!-- ── ONBOARDING ─────────────────────────────── -->
+      <div class="panel" id="panel-onboarding">
+        <div class="panel-title">🚀 Onboarding <small>/</small> <span class="endpoint-badge">PATCH
+            /users/me/onboarding</span></div>
+        <div class="card">
+          <div class="info-box" style="margin-bottom:12px;">🔐 Lưu hoặc skip kết quả onboarding survey cho user hiện
+            tại.</div>
+          <div class="field">
+            <label>Body JSON</label>
+            <textarea id="onboarding-body"
+              placeholder='{ "skipped": true }&#10;// hoặc&#10;{ "goals": ["travel", "work"], "dailyMinutes": 15 }'></textarea>
+          </div>
+          <button class="btn btn-primary" id="btnOnboarding">➤ PATCH /users/me/onboarding</button>
+        </div>
+      </div>
+
+      <!-- ── CUSTOM ────────────────────────────────── -->
+      <div class="panel" id="panel-custom">
+        <div class="panel-title">⚙️ Custom Request</div>
+        <div class="card">
+          <div class="row">
+            <div class="field w120">
               <label>Method</label>
               <select id="customMethod">
                 <option>GET</option>
@@ -182,149 +890,307 @@
                 <option>DELETE</option>
               </select>
             </div>
-            <div style="flex:1;">
+            <div class="field">
               <label>Path</label>
-              <input id="customPath" placeholder="/auth/login" />
+              <input id="customPath" placeholder="/auth/verify-token"
+                style="font-family:'JetBrains Mono',monospace;font-size:12px;" />
             </div>
           </div>
-          <label>Body JSON</label>
-          <textarea id="customBody" placeholder='{"email":"...","password":"..."}'></textarea>
-          <label><input id="customUseAuth" type="checkbox" style="width:auto;" /> Gắn Authorization Bearer accessToken</label>
-          <button id="btnCustom">Send Custom API</button>
+          <div class="field">
+            <label>Body JSON (chỉ áp dụng cho POST/PATCH/PUT)</label>
+            <textarea id="customBody" placeholder='{"key": "value"}'></textarea>
+          </div>
+          <label class="checkbox-row" style="text-transform:none;letter-spacing:0;margin-bottom:8px;">
+            <input type="checkbox" id="customUseAuth" checked />
+            Gắn Authorization: Bearer &lt;accessToken&gt;
+          </label>
+          <button class="btn btn-primary" id="btnCustom">➤ Send Request</button>
+        </div>
+        <div class="card" style="padding:14px 18px;">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600;">Shortcuts</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+            <button class="btn-sm" onclick="setCustom('GET','/auth/verify-token')">GET verify-token</button>
+            <button class="btn-sm" onclick="setCustom('GET','/home/dashboard')">GET dashboard</button>
+            <button class="btn-sm" onclick="setCustom('GET','/scenes')">GET scenes</button>
+            <button class="btn-sm" onclick="setCustom('GET','/users/me')">GET users/me</button>
+            <button class="btn-sm" onclick="setCustom('GET','/api/health',true)">GET health</button>
+          </div>
         </div>
       </div>
 
-      <div class="output">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <strong>Response</strong>
-          <span id="httpStatus" class="chip">--</span>
-        </div>
-        <pre id="outputText">{ "message": "Ready to test API" }</pre>
-      </div>
+    </div><!-- /main -->
+  </div><!-- /layout -->
+
+  <!-- ══ RESPONSE PANEL ════════════════════════════════ -->
+  <div class="response-wrap">
+    <div class="response-header" id="responseToggle">
+      <span class="response-title">Response</span>
+      <span class="status-chip neu" id="httpStatus">–</span>
+      <span id="lastEndpoint" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);"></span>
+      <span class="response-timing" id="responseTiming"></span>
+      <button class="copy-btn" id="btnCopyResponse">Copy</button>
+      <span style="color:var(--muted);font-size:13px;margin-left:8px;" id="collapseIcon">▲</span>
     </div>
+    <div class="response-body" id="responseBody">
+      <pre id="outputText">{ "message": "Ready — chọn một endpoint và nhấn Send ▶" }</pre>
+    </div>
+  </div>
 
-    <script>
-      const state = { accessToken: "", refreshToken: "" };
+  <script>
+    /* ══ State ══════════════════════════════════════════ */
+    const state = { accessToken: '', refreshToken: '' };
+    let responseCollapsed = false;
+    let startTime = 0;
 
-      const el = (id) => document.getElementById(id);
-      const baseUrl = () => (el("baseUrl").value || "").replace(/\/$/, "");
+    /* ══ Helpers ════════════════════════════════════════ */
+    const el = id => document.getElementById(id);
+    const base = () => (el('baseUrl').value || '').replace(/\/$/, '');
 
-      function syncTokenUI() {
-        el("accessTokenState").textContent = state.accessToken ? "set" : "empty";
-        el("refreshTokenState").textContent = state.refreshToken ? "set" : "empty";
-        if (state.refreshToken) {
-          el("refreshTokenInput").value = state.refreshToken;
-          el("logoutTokenInput").value = state.refreshToken;
-        }
+    function syncUI() {
+      const hasA = !!state.accessToken;
+      const hasR = !!state.refreshToken;
+      el('dotAccess').classList.toggle('active', hasA);
+      el('dotRefresh').classList.toggle('active', hasR);
+      el('accessLabel').textContent = hasA ? '✓ set' : '–';
+      el('refreshLabel').textContent = hasR ? '✓ set' : '–';
+      if (hasR) {
+        el('refresh-token-input').value = state.refreshToken;
+        el('logout-token-input').value = state.refreshToken;
       }
+    }
 
-      function printResponse(status, data) {
-        el("httpStatus").textContent = status;
-        el("outputText").textContent = JSON.stringify(data, null, 2);
-      }
+    function showResponse(status, data, endpoint = '', ms = null) {
+      const chip = el('httpStatus');
+      chip.textContent = status || '–';
+      chip.className = 'status-chip ' + (status >= 200 && status < 300 ? 'ok' : status ? 'err' : 'neu');
+      el('outputText').textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      el('lastEndpoint').textContent = endpoint;
+      el('responseTiming').textContent = ms != null ? `${ms} ms` : '';
+      if (responseCollapsed) toggleResponse();
+    }
 
-      async function callApi(path, options = {}) {
-        const res = await fetch(`${baseUrl()}${path}`, options);
-        let data = null;
-        try { data = await res.json(); } catch { data = { raw: "No JSON response" }; }
-        printResponse(res.status, data);
+    function saveTokens(data) {
+      const d = data?.data;
+      if (d?.accessToken) state.accessToken = d.accessToken;
+      if (d?.refreshToken) state.refreshToken = d.refreshToken;
+      syncUI();
+    }
+
+    async function callApi(path, options = {}, label = '') {
+      const url = path.startsWith('http') ? path : `${base()}${path}`;
+      startTime = performance.now();
+      try {
+        const res = await fetch(url, options);
+        const ms = Math.round(performance.now() - startTime);
+        let data;
+        try { data = await res.json(); } catch { data = { raw: 'No JSON body' }; }
+        showResponse(res.status, data, label || path, ms);
         return { res, data };
+      } catch (err) {
+        showResponse(0, { error: err.message }, label || path, null);
+        return { res: null, data: null };
       }
+    }
 
-      function saveTokensFrom(data) {
-        const accessToken = data?.data?.accessToken;
-        const refreshToken = data?.data?.refreshToken;
-        if (accessToken) state.accessToken = accessToken;
-        if (refreshToken) state.refreshToken = refreshToken;
-        syncTokenUI();
+    function authHeaders(useAuth = true) {
+      const h = { 'Content-Type': 'application/json' };
+      if (useAuth && state.accessToken) h.Authorization = `Bearer ${state.accessToken}`;
+      return h;
+    }
+
+    /* ══ Tab routing ═══════════════════════════════════ */
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        el(`panel-${btn.dataset.tab}`).classList.add('active');
+      });
+    });
+
+    /* ══ Response collapse ═════════════════════════════ */
+    function toggleResponse() {
+      responseCollapsed = !responseCollapsed;
+      el('responseBody').style.display = responseCollapsed ? 'none' : '';
+      el('collapseIcon').textContent = responseCollapsed ? '▼' : '▲';
+    }
+    el('responseToggle').addEventListener('click', e => {
+      if (e.target.closest('.copy-btn')) return;
+      toggleResponse();
+    });
+    el('btnCopyResponse').addEventListener('click', () => {
+      navigator.clipboard.writeText(el('outputText').textContent).then(() => {
+        el('btnCopyResponse').textContent = '✓ Copied';
+        setTimeout(() => el('btnCopyResponse').textContent = 'Copy', 1500);
+      });
+    });
+
+    /* ══ Clear tokens ══════════════════════════════════ */
+    el('btnClearTokens').onclick = () => {
+      state.accessToken = ''; state.refreshToken = '';
+      el('refresh-token-input').value = '';
+      el('logout-token-input').value = '';
+      syncUI();
+    };
+
+    /* ══ Health ════════════════════════════════════════ */
+    el('btnHealth').onclick = async () => {
+      await callApi(`${base()}/health`.replace('/api/health', '/api/health'), {}, 'GET /health');
+      // fallback in case base already includes /api
+      const url = base().endsWith('/api') ? base().replace(/\/api$/, '/api/health') : `${base()}/health`;
+      const t = performance.now();
+      try {
+        const r = await fetch(url);
+        const d = await r.json();
+        showResponse(r.status, d, 'GET /api/health', Math.round(performance.now() - t));
+      } catch (e) { showResponse(0, { error: e.message }, 'GET /api/health'); }
+    };
+
+    /* ══ Auth ══════════════════════════════════════════ */
+    el('btnRegister').onclick = async () => {
+      const body = {
+        email: el('reg-email').value,
+        password: el('reg-pw').value,
+        displayName: el('reg-name').value || undefined,
+        avatarUrl: el('reg-avatar').value || undefined,
+      };
+      const { data } = await callApi('/auth/register', {
+        method: 'POST', headers: authHeaders(false), body: JSON.stringify(body)
+      }, 'POST /auth/register');
+      saveTokens(data);
+    };
+
+    el('btnLogin').onclick = async () => {
+      const body = { email: el('login-email').value, password: el('login-pw').value };
+      const { data } = await callApi('/auth/login', {
+        method: 'POST', headers: authHeaders(false), body: JSON.stringify(body)
+      }, 'POST /auth/login');
+      saveTokens(data);
+    };
+
+    el('btnGoogle').onclick = async () => {
+      const body = { idToken: el('googleIdToken').value.trim() };
+      const { data } = await callApi('/auth/google', {
+        method: 'POST', headers: authHeaders(false), body: JSON.stringify(body)
+      }, 'POST /auth/google');
+      saveTokens(data);
+    };
+
+    el('btnRefresh').onclick = async () => {
+      const rt = el('refresh-token-input').value.trim() || state.refreshToken;
+      const { data } = await callApi('/auth/refresh', {
+        method: 'POST', headers: authHeaders(false), body: JSON.stringify({ refreshToken: rt })
+      }, 'POST /auth/refresh');
+      if (data?.data?.accessToken) { state.accessToken = data.data.accessToken; syncUI(); }
+    };
+
+    el('btnLogout').onclick = async () => {
+      const rt = el('logout-token-input').value.trim() || state.refreshToken;
+      await callApi('/auth/logout', {
+        method: 'POST', headers: authHeaders(false), body: JSON.stringify({ refreshToken: rt })
+      }, 'POST /auth/logout');
+      state.accessToken = ''; state.refreshToken = '';
+      syncUI();
+    };
+
+    el('btnVerify').onclick = async () => {
+      await callApi('/auth/verify-token', { headers: authHeaders() }, 'GET /auth/verify-token');
+    };
+
+    /* ══ Home ══════════════════════════════════════════ */
+    el('btnDashboard').onclick = async () => {
+      await callApi('/home/dashboard', { headers: authHeaders() }, 'GET /home/dashboard');
+    };
+
+    /* ══ Scenes ════════════════════════════════════════ */
+    el('btnSceneList').onclick = async () => {
+      const params = new URLSearchParams();
+      const cat = el('scene-category').value;
+      const diff = el('scene-difficulty').value;
+      const page = el('scene-page').value;
+      if (cat) params.set('category', cat);
+      if (diff) params.set('difficulty', diff);
+      if (page && page !== '1') params.set('page', page);
+      const qs = params.toString() ? '?' + params.toString() : '';
+      await callApi(`/scenes${qs}`, { headers: authHeaders() }, `GET /scenes${qs}`);
+    };
+
+    el('btnSceneSearch').onclick = async () => {
+      const q = el('scene-query').value.trim();
+      if (!q) return showResponse(0, { error: 'Nhập từ khoá tìm kiếm' }, '');
+      await callApi(`/scenes/search?q=${encodeURIComponent(q)}`, { headers: authHeaders() }, `GET /scenes/search?q=${q}`);
+    };
+
+    el('btnSceneDetail').onclick = async () => {
+      const id = el('scene-id').value.trim();
+      if (!id) return showResponse(0, { error: 'Nhập Scene ID' }, '');
+      await callApi(`/scenes/${id}`, { headers: authHeaders() }, `GET /scenes/${id}`);
+    };
+
+    /* ══ Sessions ══════════════════════════════════════ */
+    el('btnLevelTest').onclick = async () => {
+      const body = {
+        message: el('lt-message').value.trim(),
+        turnIndex: parseInt(el('lt-turn').value, 10),
+      };
+      await callApi('/sessions/level-test', {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify(body)
+      }, 'POST /sessions/level-test');
+    };
+
+    /* ══ Users ═════════════════════════════════════════ */
+    el('btnGetMe').onclick = async () => {
+      await callApi('/users/me', { headers: authHeaders() }, 'GET /users/me');
+    };
+
+    el('btnUpdateMe').onclick = async () => {
+      const body = {};
+      const name = el('upd-name').value.trim();
+      const avatar = el('upd-avatar').value.trim();
+      if (name) body.displayName = name;
+      if (avatar) body.avatarUrl = avatar;
+      await callApi('/users/me', {
+        method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body)
+      }, 'PATCH /users/me');
+    };
+
+    el('btnOnboarding').onclick = async () => {
+      const raw = el('onboarding-body').value.trim();
+      let body = { skipped: true };
+      if (raw) try { body = JSON.parse(raw); } catch { return showResponse(0, { error: 'JSON không hợp lệ' }); }
+      await callApi('/users/me/onboarding', {
+        method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body)
+      }, 'PATCH /users/me/onboarding');
+    };
+
+    /* ══ Custom ════════════════════════════════════════ */
+    el('btnCustom').onclick = async () => {
+      const method = el('customMethod').value;
+      let path = el('customPath').value.trim();
+      if (!path.startsWith('/')) path = '/' + path;
+      const useAuth = el('customUseAuth').checked;
+      const headers = authHeaders(useAuth);
+      const options = { method, headers };
+      if (!['GET', 'DELETE'].includes(method)) {
+        const raw = el('customBody').value.trim();
+        options.body = raw || '{}';
       }
+      await callApi(path, options, `${method} ${path}`);
+    };
 
-      el("btnHealth").onclick = async () => {
-        const res = await fetch(`${baseUrl()}/health`);
-        const data = await res.json();
-        printResponse(res.status, data);
-      };
+    function setCustom(method, path, absolute = false) {
+      el('customMethod').value = method;
+      el('customPath').value = absolute ? path : path;
+      // switch to custom tab
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelector('[data-tab="custom"]').classList.add('active');
+      el('panel-custom').classList.add('active');
+    }
 
-      el("btnRegister").onclick = async () => {
-        const body = {
-          email: el("registerEmail").value,
-          password: el("registerPassword").value,
-          displayName: el("registerDisplayName").value || undefined
-        };
-        const { data } = await callApi("/auth/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        saveTokensFrom(data);
-      };
+    /* ══ Init ══════════════════════════════════════════ */
+    syncUI();
+  </script>
+</body>
 
-      el("btnLogin").onclick = async () => {
-        const body = {
-          email: el("loginEmail").value,
-          password: el("loginPassword").value
-        };
-        const { data } = await callApi("/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        saveTokensFrom(data);
-      };
-
-      el("btnGoogle").onclick = async () => {
-        const body = { idToken: el("googleIdToken").value.trim() };
-        const { data } = await callApi("/auth/google", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        saveTokensFrom(data);
-      };
-
-      el("btnRefresh").onclick = async () => {
-        const body = { refreshToken: el("refreshTokenInput").value.trim() || state.refreshToken };
-        const { data } = await callApi("/auth/refresh", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        const accessToken = data?.data?.accessToken;
-        if (accessToken) {
-          state.accessToken = accessToken;
-          syncTokenUI();
-        }
-      };
-
-      el("btnLogout").onclick = async () => {
-        const body = { refreshToken: el("logoutTokenInput").value.trim() || state.refreshToken };
-        await callApi("/auth/logout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        state.accessToken = "";
-        state.refreshToken = "";
-        syncTokenUI();
-      };
-
-      el("btnCustom").onclick = async () => {
-        const method = el("customMethod").value;
-        const path = el("customPath").value.trim();
-        const bodyText = el("customBody").value.trim();
-        const headers = { "Content-Type": "application/json" };
-        if (el("customUseAuth").checked && state.accessToken) {
-          headers.Authorization = `Bearer ${state.accessToken}`;
-        }
-
-        const options = { method, headers };
-        if (!["GET", "DELETE"].includes(method)) {
-          options.body = bodyText ? bodyText : "{}";
-        }
-        await callApi(path.startsWith("/") ? path : `/${path}`, options);
-      };
-
-      syncTokenUI();
-    </script>
-  </body>
 </html>
