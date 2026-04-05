@@ -23,6 +23,7 @@ export async function runDatabaseSeeds() {
   console.log(`- admin@scenio.dev / ${TEST_PASSWORD}`);
   console.log(`- learner@scenio.dev / ${TEST_PASSWORD}`);
   console.log(`- beginner@scenio.dev / ${TEST_PASSWORD}`);
+  console.log(`- newcomer@scenio.dev / ${TEST_PASSWORD}`);
   console.log('Seed summary:');
   console.log(`- Users: ${Object.keys(users).length}`);
   console.log(`- Refresh tokens: ${Object.keys(refreshTokens).length}`);
