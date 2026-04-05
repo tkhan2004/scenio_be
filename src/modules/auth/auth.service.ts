@@ -53,6 +53,20 @@ export async function login(input: LoginInput) {
 }
 
 /**
+ * Function Objective - verifyTokenUser
+ * Summary: Lấy thông tin user hiện tại từ access token đã được verify ở middleware.
+ */
+export async function verifyTokenUser(userId: string) {
+    const user = await authRepo.findUserById(userId);
+    if (!user) {
+        throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+    }
+
+    const { password: _, ...safeUser } = user;
+    return safeUser;
+}
+
+/**
  * Function Objective - loginWithGoogle
  * Summary: Xác thực Google ID token và đăng nhập/đăng ký tự động.
  */

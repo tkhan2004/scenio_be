@@ -13,6 +13,8 @@ export const validate = (schema: ZodSchema) => (req: Request, res: Response, nex
     const message = result.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join('; ');
     return fail(res, message, 'VALIDATION_ERROR', 400, details);
   }
-  (req as any).validatedBody = (result.data as any).body ?? result.data;
+  (req as any).validatedBody = (result.data as any).body ?? {};
+  (req as any).validatedQuery = (result.data as any).query ?? {};
+  (req as any).validatedParams = (result.data as any).params ?? {};
   next();
 };

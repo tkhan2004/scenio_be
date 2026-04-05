@@ -50,6 +50,22 @@ export const googleLogin = async (req: Request, res: Response, next: NextFunctio
 };
 
 /**
+ * HTTP Handler - verifyToken
+ * Summary: Kiểm tra access token còn hợp lệ và trả về user hiện tại.
+ */
+export const verifyToken = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user?.id as string | undefined;
+    if (!userId) return fail(res, 'Thiếu thông tin người dùng', 'UNAUTHORIZED', 401);
+
+    const user = await authService.verifyTokenUser(userId);
+    ok(res, { user });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * HTTP Handler - refresh
  * Summary: Lấy Access Token mới từ Refresh Token.
  * Inputs: body.refreshToken.
