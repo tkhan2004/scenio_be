@@ -1,8 +1,9 @@
+import 'dotenv/config';
 import { prisma } from "../src/config/database";
-import { runHomeSeed } from "./home-seed";
+import { runDatabaseSeeds } from "./seeds";
 
 async function main() {
-  await runHomeSeed();
+  await runDatabaseSeeds();
 }
 
 main()
