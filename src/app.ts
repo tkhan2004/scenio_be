@@ -8,6 +8,7 @@ import { errorHandler } from './middleware/errorHandler';
 
 import authRoutes from './modules/auth/auth.routes';
 import homeRoutes from './modules/home/home.routes';
+import scenesRoutes from './modules/scenes/scenes.routes';
 
 const app: Express = express();
 
@@ -20,6 +21,7 @@ app.use(express.urlencoded({ extended: true }));
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/home', homeRoutes);
+app.use('/api/scenes', scenesRoutes);
 
 app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({ ok: true, timestamp: new Date().toISOString() });
