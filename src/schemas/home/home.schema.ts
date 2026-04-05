@@ -1,9 +1,11 @@
+import e from "express";
 import { z } from "zod";
 
 export const getHomeSchema = z.object({
-    body: z.object({}),
-    query: z.object({}),
-    params: z.object({}),
-});
+    body: z.object({
+        email: z.string().email(),
+    })
+})
 
-export type GetHomeInput = z.infer<typeof getHomeSchema>;
+export type GetHomeInput = z.infer<typeof getHomeSchema>['body'];
+
