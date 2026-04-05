@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from "../../config/database";
 
 /**
@@ -19,11 +20,11 @@ export async function findUserByGoogleId(googleId: string) {
   return await prisma.user.findUnique({ where: { googleId } });
 }
 
-export async function createUser(data: any) {
+export async function createUser(data: Prisma.UserCreateInput) {
   return await prisma.user.create({ data });
 }
 
-export async function updateUserById(id: string, data: any) {
+export async function updateUserById(id: string, data: Prisma.UserUpdateInput) {
   return await prisma.user.update({
     where: { id },
     data,

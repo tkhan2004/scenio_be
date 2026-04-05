@@ -1,10 +1,21 @@
+import { randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 import { RegisterInput, LoginInput } from "../../schemas/auth";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../../utils/jwt";
 import * as authRepo from './auth.repository';
+import { AuthResponse, AuthUserRecord, SafeAuthUser } from './auth.types';
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+function buildSafeUser(user: AuthUserRecord): SafeAuthUser {
+    const { password: _, ...safeUser } = user;
+
+    return {
+        ...safeUser,
+        needsOnboarding: safeUser.onboardingCompletedAt === null,
+    };
+}
 
 /**
  * Function Objective - register
@@ -29,7 +40,7 @@ export async function register(input: RegisterInput) {
         avatarUrl: avatarUrl ?? null,
     });
 
-    return await generateAuthResponse(user);
+    return await generateAuthResponse(user, true);
 }
 
 /**
@@ -49,7 +60,7 @@ export async function login(input: LoginInput) {
         throw Object.assign(new Error('Email hoặc mật khẩu không chính xác'), { code: 'UNAUTHORIZED', status: 401 });
     }
 
-    return await generateAuthResponse(user);
+    return await generateAuthResponse(user, false);
 }
 
 /**
@@ -62,8 +73,7 @@ export async function verifyTokenUser(userId: string) {
         throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
     }
 
-    const { password: _, ...safeUser } = user;
-    return safeUser;
+    return buildSafeUser(user);
 }
 
 /**
@@ -107,6 +117,7 @@ export async function loginWithGoogle(idToken: string) {
     const displayName = payload.name ?? null;
     const avatarUrl = payload.picture ?? null;
 
+    let isNewUser = false;
     let user = await authRepo.findUserByGoogleId(googleId);
 
     if (!user) {
@@ -118,6 +129,7 @@ export async function loginWithGoogle(idToken: string) {
                 avatarUrl: existingByEmail.avatarUrl ?? avatarUrl,
             });
         } else {
+            isNewUser = true;
             user = await authRepo.createUser({
                 email,
                 password: null,
@@ -128,7 +140,7 @@ export async function loginWithGoogle(idToken: string) {
         }
     }
 
-    return await generateAuthResponse(user);
+    return await generateAuthResponse(user, isNewUser);
 }
 
 /**
@@ -163,10 +175,10 @@ export async function logout(token: string) {
 /**
  * Helper - Tạo AccessToken và RefreshToken, lưu vào Repo
  */
-async function generateAuthResponse(user: any) {
+async function generateAuthResponse(user: AuthUserRecord, isNewUser: boolean): Promise<AuthResponse> {
     const payload = { id: user.id, email: user.email, isAdmin: user.isAdmin };
     const accessToken = signAccessToken(payload);
-    const refreshToken = signRefreshToken(payload);
+    const refreshToken = signRefreshToken({ ...payload, jti: randomUUID() });
 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 30);
@@ -177,6 +189,14 @@ async function generateAuthResponse(user: any) {
         expiresAt,
     });
 
-    const { password: _, ...safeUser } = user;
-    return { user: safeUser, accessToken, refreshToken };
+    const safeUser = buildSafeUser(user);
+
+    return {
+        user: safeUser,
+        accessToken,
+        refreshToken,
+        isNewUser,
+        needsLevelTest: safeUser.needsLevelTest,
+        needsOnboarding: safeUser.needsOnboarding,
+    };
 }

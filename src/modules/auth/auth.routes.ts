@@ -1,7 +1,13 @@
 import { Router } from 'express';
 import * as authController from './auth.controller';
 import { validate } from '../../middleware/validate';
-import { registerSchema, loginSchema, googleLoginSchema } from '../../schemas/auth';
+import {
+  registerSchema,
+  loginSchema,
+  googleLoginSchema,
+  refreshSchema,
+  logoutSchema,
+} from '../../schemas/auth';
 import { auth } from '../../middleware/auth';
 
 const router = Router();
@@ -34,12 +40,12 @@ router.get('/verify-token', auth, authController.verifyToken);
  * @route   POST /api/auth/refresh
  * @desc    Lấy AccessToken mới từ RefreshToken
  */
-router.post('/refresh', authController.refresh);
+router.post('/refresh', validate(refreshSchema), authController.refresh);
 
 /**
  * @route   POST /api/auth/logout
  * @desc    Hủy RefreshToken để đăng xuất
  */
-router.post('/logout', authController.logout);
+router.post('/logout', validate(logoutSchema), authController.logout);
 
 export default router;

@@ -1,7 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { ok, fail } from '../../utils/response';
 import * as authService from './auth.service';
-import { RegisterInput, LoginInput, GoogleLoginInput } from '../../schemas/auth';
+import {
+  RegisterInput,
+  LoginInput,
+  GoogleLoginInput,
+  RefreshInput,
+  LogoutInput,
+} from '../../schemas/auth';
 
 /**
  * HTTP Handler - register
@@ -72,9 +78,7 @@ export const verifyToken = async (req: Request, res: Response, next: NextFunctio
  */
 export const refresh = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { refreshToken } = req.body;
-    if (!refreshToken) return fail(res, 'Thiếu Refresh Token', 'BAD_REQUEST', 400);
-
+    const { refreshToken } = (req as any).validatedBody as RefreshInput;
     const result = await authService.refresh(refreshToken);
     ok(res, result);
   } catch (error) {
@@ -89,8 +93,8 @@ export const refresh = async (req: Request, res: Response, next: NextFunction) =
  */
 export const logout = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { refreshToken } = req.body;
-    if (refreshToken) await authService.logout(refreshToken);
+    const { refreshToken } = (req as any).validatedBody as LogoutInput;
+    await authService.logout(refreshToken);
     ok(res, { message: 'Đăng xuất thành công' });
   } catch (error) {
     next(error);
