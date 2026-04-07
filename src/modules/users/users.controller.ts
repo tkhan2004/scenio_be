@@ -64,3 +64,43 @@ export const updateMeController = async (req: Request, res: Response, next: Next
     next(error);
   }
 };
+
+/**
+ * HTTP Handler - getProgressController
+ * Summary: Lấy dữ liệu tiến độ học tập cho user hiện tại.
+ * Inputs: req, res, next.
+ * Behavior: Lấy userId từ access token -> gọi service -> trả response chuẩn.
+ */
+export const getProgressController = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user?.id as string | undefined;
+    if (!userId) {
+      return fail(res, 'Thiếu thông tin người dùng', 'UNAUTHORIZED', 401);
+    }
+
+    const result = await usersService.getProgress(userId);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - getBadgesController
+ * Summary: Lấy danh sách achievement/badges của user hiện tại.
+ * Inputs: req, res, next.
+ * Behavior: Lấy userId từ access token -> gọi service -> trả response chuẩn.
+ */
+export const getBadgesController = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user?.id as string | undefined;
+    if (!userId) {
+      return fail(res, 'Thiếu thông tin người dùng', 'UNAUTHORIZED', 401);
+    }
+
+    const result = await usersService.getBadges(userId);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};

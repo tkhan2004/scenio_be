@@ -3,7 +3,7 @@ import prisma from '../../config/database';
 
 /**
  * Repository - Users
- * Summary: Quản lý truy vấn dữ liệu cho user profile và onboarding.
+ * Summary: Quản lý truy vấn dữ liệu cho user profile, onboarding, progress và badges.
  */
 
 /**
@@ -56,6 +56,88 @@ export async function findPublicUserProfileById(id: string) {
       isAdmin: true,
       createdAt: true,
       updatedAt: true,
+    },
+  });
+}
+
+/**
+ * Query Objective - findProgressUserById
+ * Summary: Lấy snapshot tiến độ tổng quan của user cho progress screen.
+ * Query Shape: findUnique + select level, totalXp, streakDays, lastActiveDate.
+ */
+export async function findProgressUserById(id: string) {
+  return prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      level: true,
+      totalXp: true,
+      streakDays: true,
+      lastActiveDate: true,
+    },
+  });
+}
+
+/**
+ * Query Objective - findCompletedSessionsForProgress
+ * Summary: Lấy toàn bộ completed sessions cần thiết để tính biểu đồ và history.
+ * Query Shape: findMany theo userId + status COMPLETED, include scene summary.
+ */
+export async function findCompletedSessionsForProgress(userId: string) {
+  return prisma.session.findMany({
+    where: {
+      userId,
+      status: 'COMPLETED',
+    },
+    orderBy: {
+      endedAt: 'desc',
+    },
+    select: {
+      id: true,
+      startedAt: true,
+      endedAt: true,
+      xpEarned: true,
+      hintCount: true,
+      grammarScore: true,
+      vocabularyScore: true,
+      naturalnessScore: true,
+      scene: {
+        select: {
+          title: true,
+          category: true,
+          difficulty: true,
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Query Objective - findActiveBadgesWithEarnedStatus
+ * Summary: Lấy tất cả badge active cùng trạng thái earned của user hiện tại.
+ * Query Shape: findMany badge active + include userBadges filtered by userId.
+ */
+export async function findActiveBadgesWithEarnedStatus(userId: string) {
+  return prisma.badge.findMany({
+    where: {
+      isActive: true,
+    },
+    orderBy: [{ xpReward: 'desc' }, { title: 'asc' }],
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      iconKey: true,
+      conditionType: true,
+      conditionValue: true,
+      xpReward: true,
+      userBadges: {
+        where: { userId },
+        select: {
+          earnedAt: true,
+        },
+        take: 1,
+      },
     },
   });
 }
