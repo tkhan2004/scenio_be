@@ -8,6 +8,7 @@ import { errorHandler } from './middleware/errorHandler';
 
 import authRoutes from './modules/auth/auth.routes';
 import homeRoutes from './modules/home/home.routes';
+import missionsRoutes from './modules/missions/missions.routes';
 import scenesRoutes from './modules/scenes/scenes.routes';
 import sessionsRoutes from './modules/sessions/sessions.routes';
 import usersRoutes from './modules/users/users.routes';
@@ -23,6 +24,7 @@ app.use(express.urlencoded({ extended: true }));
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/home', homeRoutes);
+app.use('/api/missions', missionsRoutes);
 app.use('/api/scenes', scenesRoutes);
 app.use('/api/sessions', sessionsRoutes);
 app.use('/api/users', usersRoutes);
