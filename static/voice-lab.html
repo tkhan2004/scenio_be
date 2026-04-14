@@ -1,0 +1,1408 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scenio Voice Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f2eadf;
+      --paper: rgba(255, 248, 239, 0.88);
+      --panel: rgba(255, 252, 246, 0.78);
+      --line: rgba(102, 75, 52, 0.14);
+      --text: #352517;
+      --muted: #8a6a50;
+      --accent: #ca5a2e;
+      --accent-2: #245f53;
+      --gold: #d59f33;
+      --danger: #c44536;
+      --ok: #2f855a;
+      --shadow: 0 24px 60px rgba(75, 50, 26, 0.12);
+      --radius: 24px;
+      --mono: 'IBM Plex Mono', monospace;
+      --sans: 'Space Grotesk', sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(213, 159, 51, 0.22), transparent 24%),
+        radial-gradient(circle at top right, rgba(36, 95, 83, 0.18), transparent 28%),
+        linear-gradient(160deg, #f7f1e7 0%, #ecdfcf 100%);
+    }
+
+    .shell {
+      width: min(1440px, calc(100vw - 32px));
+      margin: 16px auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 32px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      backdrop-filter: blur(18px);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 20px;
+      padding: 28px;
+      background:
+        linear-gradient(135deg, rgba(255, 247, 236, 0.94), rgba(252, 241, 227, 0.82)),
+        linear-gradient(90deg, rgba(202, 90, 46, 0.08), rgba(36, 95, 83, 0.08));
+      border-bottom: 1px solid var(--line);
+    }
+
+    .headline h1 {
+      margin: 0 0 14px;
+      font-size: clamp(32px, 4vw, 54px);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+    }
+
+    .headline p {
+      margin: 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+
+    .stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.66);
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .pill strong { color: var(--text); }
+
+    .status-card {
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(255, 248, 239, 0.9));
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px dashed rgba(102, 75, 52, 0.16);
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .status-row:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .status-row strong { color: var(--text); }
+
+    .main {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      min-height: calc(100vh - 220px);
+    }
+
+    .rail,
+    .stage {
+      padding: 22px;
+    }
+
+    .rail {
+      border-right: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255, 252, 247, 0.78), rgba(248, 240, 230, 0.54));
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+    }
+
+    .card h2,
+    .card h3 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      letter-spacing: -0.03em;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .field { display: grid; gap: 6px; margin-bottom: 12px; }
+
+    label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+
+    input,
+    textarea,
+    select,
+    button {
+      font: inherit;
+    }
+
+    input,
+    textarea,
+    select {
+      width: 100%;
+      border: 1px solid rgba(102, 75, 52, 0.15);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.78);
+      padding: 12px 14px;
+      color: var(--text);
+    }
+
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+    }
+
+    input.code,
+    .code {
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 999px;
+      padding: 11px 16px;
+      cursor: pointer;
+      transition: transform 0.16s ease, opacity 0.16s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      opacity: 0.94;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #e27b43);
+      color: #fff7ef;
+    }
+
+    .btn-secondary {
+      background: linear-gradient(135deg, var(--accent-2), #2f7567);
+      color: #eefaf7;
+    }
+
+    .btn-muted {
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid var(--line);
+      color: var(--text);
+    }
+
+    .btn-danger {
+      background: rgba(196, 69, 54, 0.12);
+      border: 1px solid rgba(196, 69, 54, 0.18);
+      color: var(--danger);
+    }
+
+    .hint {
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+
+    .scene-list,
+    .vocab-list,
+    .mission-list {
+      display: grid;
+      gap: 10px;
+      max-height: 340px;
+      overflow: auto;
+    }
+
+    .scene-item,
+    .vocab-item,
+    .mission-item {
+      padding: 12px 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(102, 75, 52, 0.12);
+      background: rgba(255, 255, 255, 0.62);
+    }
+
+    .scene-item.active {
+      border-color: rgba(202, 90, 46, 0.34);
+      box-shadow: inset 0 0 0 1px rgba(202, 90, 46, 0.15);
+    }
+
+    .scene-item button,
+    .quick-save {
+      margin-top: 8px;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) 320px;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .panel-stack {
+      display: grid;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .chat-shell {
+      display: grid;
+      gap: 14px;
+    }
+
+    .chat-stream {
+      min-height: 360px;
+      max-height: 520px;
+      overflow: auto;
+      display: grid;
+      gap: 12px;
+      padding-right: 4px;
+    }
+
+    .bubble {
+      width: min(88%, 720px);
+      padding: 14px 16px;
+      border-radius: 22px;
+      line-height: 1.6;
+      box-shadow: 0 10px 24px rgba(70, 49, 28, 0.08);
+    }
+
+    .bubble.ai {
+      background: linear-gradient(135deg, rgba(36, 95, 83, 0.14), rgba(36, 95, 83, 0.07));
+      border: 1px solid rgba(36, 95, 83, 0.14);
+    }
+
+    .bubble.user {
+      margin-left: auto;
+      background: linear-gradient(135deg, rgba(202, 90, 46, 0.14), rgba(202, 90, 46, 0.07));
+      border: 1px solid rgba(202, 90, 46, 0.14);
+    }
+
+    .bubble small {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .composer {
+      display: grid;
+      gap: 10px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .toolbar .actions { align-items: center; }
+
+    .checkbox {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .checkbox input {
+      width: auto;
+      accent-color: var(--accent);
+    }
+
+    .log {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.65);
+      border: 1px dashed rgba(102, 75, 52, 0.14);
+      min-height: 42px;
+    }
+
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      padding: 10px 0;
+      border-bottom: 1px dashed rgba(102, 75, 52, 0.12);
+    }
+
+    .metric:last-child { border-bottom: 0; }
+
+    .empty {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 18px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.52);
+      border: 1px dashed rgba(102, 75, 52, 0.14);
+    }
+
+    @media (max-width: 1180px) {
+      .hero,
+      .main,
+      .stage { grid-template-columns: 1fr; }
+      .rail { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="headline">
+        <h1>Voice Lab cho luồng roleplay của Scenio</h1>
+        <p>Trang này để bạn hình dung phiên học thật sẽ diễn ra ra sao: đăng nhập, lấy dashboard, nhận scene gợi ý, mở session, nói chuyện với nhân vật qua 9router, rồi lưu vocabulary vào app hiện tại mà không phải đập nhiều code backend.</p>
+        <div class="stack">
+          <span class="pill"><strong>Backend thật:</strong> auth, home, scenes, sessions, vocabulary</span>
+          <span class="pill"><strong>LLM lab:</strong> 9router OpenAI-compatible proxy</span>
+          <span class="pill"><strong>Voice v0:</strong> push-to-talk bằng SpeechRecognition của browser</span>
+        </div>
+      </div>
+      <aside class="status-card">
+        <div class="status-row"><span>Trang lab</span><strong>/ui/voice-lab.html</strong></div>
+        <div class="status-row"><span>Router mặc định</span><strong id="routerTarget">http://localhost:20128/v1</strong></div>
+        <div class="status-row"><span>Model mặc định</span><strong id="routerModelLabel">gc/gemini-3-flash-preview</strong></div>
+        <div class="status-row"><span>Backend trạng thái</span><strong id="backendStatus">Chưa đăng nhập</strong></div>
+        <div class="status-row"><span>Phiên hiện tại</span><strong id="sessionStatus">Chưa có session</strong></div>
+      </aside>
+    </section>
+
+    <section class="main">
+      <aside class="rail">
+        <div class="card">
+          <h2>1. Setup nhanh</h2>
+          <div class="field">
+            <label for="backendBaseUrl">Backend Base URL</label>
+            <input id="backendBaseUrl" class="code" />
+          </div>
+          <div class="field">
+            <label for="routerBaseUrl">9router Base URL</label>
+            <input id="routerBaseUrl" class="code" />
+          </div>
+          <div class="field">
+            <label for="routerModel">Model</label>
+            <input id="routerModel" class="code" />
+          </div>
+          <div class="field">
+            <label for="routerApiKey">9router Key</label>
+            <input id="routerApiKey" class="code" type="password" placeholder="Dán key của bạn vào đây" />
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label for="email">Email</label>
+              <input id="email" />
+            </div>
+            <div class="field">
+              <label for="password">Password</label>
+              <input id="password" type="password" />
+            </div>
+          </div>
+          <div class="actions">
+            <button id="loginBtn" class="btn btn-primary">Đăng nhập seed user</button>
+            <button id="routerTestBtn" class="btn btn-muted">Test 9router</button>
+            <button id="resetSetupBtn" class="btn btn-muted">Reset setup</button>
+          </div>
+          <p class="hint">Mặc định mình preset user seed <span class="code">learner@scenio.dev / 123456</span>. Key 9router không được hardcode vào file để tránh lộ secret.</p>
+        </div>
+
+        <div class="card">
+          <h3>2. Dashboard snapshot</h3>
+          <div id="dashboardBox" class="empty">Đăng nhập xong mình sẽ nạp luôn dashboard, mission hôm nay và session đang dở.</div>
+        </div>
+
+        <div class="card">
+          <h3>3. Scene gợi ý</h3>
+          <div class="actions" style="margin-bottom: 10px;">
+            <button id="recommendBtn" class="btn btn-secondary">Load recommend</button>
+            <button id="reloadScenesBtn" class="btn btn-muted">Fallback list</button>
+          </div>
+          <div id="sceneList" class="scene-list"></div>
+        </div>
+
+        <div class="card">
+          <h3>6. Vocabulary vừa lưu</h3>
+          <div id="vocabList" class="vocab-list"></div>
+        </div>
+      </aside>
+
+      <section class="stage">
+        <div class="panel-stack">
+          <div class="card">
+            <h2>4. Persona của scene</h2>
+            <div id="sceneDetailBox" class="empty">Chọn một scene bên trái để xem mission, persona và vocabulary gốc của nhân vật.</div>
+          </div>
+
+          <div class="card chat-shell">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+              <div>
+                <h2 style="margin-bottom:6px;">5. Lab chat</h2>
+                <div class="hint">`POST /sessions/start` là thật. Những lượt chat sau đang đi qua 9router proxy để bạn hình dung chức năng chính trước khi backend roleplay message hoàn thiện.</div>
+              </div>
+              <div class="actions">
+                <button id="startSessionBtn" class="btn btn-primary">Start Session</button>
+                <button id="abandonBtn" class="btn btn-danger">Abandon</button>
+              </div>
+            </div>
+            <div id="chatStream" class="chat-stream"></div>
+            <div class="composer">
+              <textarea id="composer" placeholder="Ví dụ: Hi, I need help checking in for my flight tomorrow morning."></textarea>
+              <div class="toolbar">
+                <div class="actions">
+                  <button id="sendBtn" class="btn btn-secondary">Gửi message</button>
+                  <button id="pttBtn" class="btn btn-muted">Push to Talk</button>
+                </div>
+                <label class="checkbox"><input id="autoSpeak" type="checkbox" checked /> Đọc reply thành tiếng</label>
+              </div>
+              <div id="logBox" class="log">Sẵn sàng. Chọn scene, start session rồi chat thử để xem flow app.</div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="panel-stack">
+          <div class="card">
+            <h3>Voice reply</h3>
+            <div class="field">
+              <label for="voiceMode">Voice mode</label>
+              <select id="voiceMode">
+                <option value="browser">Browser speech</option>
+                <option value="elevenlabs">ElevenLabs</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="voicePreset">Voice preset</label>
+              <select id="voicePreset"></select>
+            </div>
+            <div class="field">
+              <label for="customVoiceId">Custom voice id</label>
+              <input id="customVoiceId" class="code" placeholder="Dán voice_id vào đây nếu muốn override preset" />
+            </div>
+            <div class="field">
+              <label for="voicePreviewText">Preview text</label>
+              <textarea id="voicePreviewText">Hello, I am your speaking partner today. How can I help you?</textarea>
+            </div>
+            <div class="actions">
+              <button id="loadVoiceConfigBtn" class="btn btn-muted">Load voice config</button>
+              <button id="previewVoiceBtn" class="btn btn-secondary">Preview voice</button>
+              <button id="stopVoiceBtn" class="btn btn-danger">Stop audio</button>
+            </div>
+            <div id="voiceStatus" class="hint" style="margin-top:10px;">Đăng nhập rồi bấm load voice config để test ElevenLabs từ backend.</div>
+          </div>
+
+          <div class="card">
+            <h3>Flow map</h3>
+            <div class="metric"><span>1. Auth</span><strong>POST /api/auth/login</strong></div>
+            <div class="metric"><span>2. Home</span><strong>GET /api/home/dashboard</strong></div>
+            <div class="metric"><span>3. Recommend</span><strong>GET /api/scenes/recommend</strong></div>
+            <div class="metric"><span>4. Start</span><strong>POST /api/sessions/start</strong></div>
+            <div class="metric"><span>5. AI turn</span><strong>POST /api/lab/chat-proxy</strong></div>
+            <div class="metric"><span>6. Save word</span><strong>POST /api/vocabulary</strong></div>
+            <div class="metric"><span>7. Exit</span><strong>PATCH /api/sessions/:id/abandon</strong></div>
+          </div>
+
+          <div class="card">
+            <h3>Lưu vocabulary thủ công</h3>
+            <div class="field">
+              <label for="manualWord">Word</label>
+              <input id="manualWord" placeholder="reservation" />
+            </div>
+            <div class="field">
+              <label for="manualDefinition">Definition</label>
+              <textarea id="manualDefinition" placeholder="An arrangement that keeps a seat, room, or table for you."></textarea>
+            </div>
+            <div class="actions">
+              <button id="saveManualBtn" class="btn btn-primary">Save to vocabulary</button>
+              <button id="loadVocabBtn" class="btn btn-muted">Refresh list</button>
+            </div>
+            <p class="hint">Bạn cũng có thể bấm quick save trực tiếp từ danh sách vocabulary của scene để test nhánh auto-save.</p>
+          </div>
+        </aside>
+      </section>
+    </section>
+  </div>
+
+  <script>
+    const storageKey = 'scenio-voice-lab';
+    const state = {
+      backendBaseUrl: '',
+      routerBaseUrl: '',
+      routerModel: '',
+      routerApiKey: '',
+      email: '',
+      password: '',
+      accessToken: '',
+      user: null,
+      dashboard: null,
+      scenes: [],
+      sceneDetail: null,
+      selectedSceneId: '',
+      sessionId: '',
+      messages: [],
+      vocabulary: [],
+      autoSpeak: true,
+      voiceMode: 'browser',
+      voiceConfig: null,
+      voicePresetId: 'default',
+      customVoiceId: '',
+      currentAudio: null,
+      isListening: false,
+      recognition: null,
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function normalizeBaseUrl(value, fallback) {
+      const base = (value || fallback || '').trim();
+      return base.replace(/\/+$/, '');
+    }
+
+    function getSuggestedBackendBaseUrl() {
+      const origin = normalizeBaseUrl(window.location.origin, 'http://localhost:3000');
+      return /:3000$/i.test(origin) ? origin : 'http://localhost:3000';
+    }
+
+    function saveState() {
+      const payload = {
+        backendBaseUrl: state.backendBaseUrl,
+        routerBaseUrl: state.routerBaseUrl,
+        routerModel: state.routerModel,
+        routerApiKey: state.routerApiKey,
+        email: state.email,
+        password: state.password,
+        accessToken: state.accessToken,
+        autoSpeak: state.autoSpeak,
+        voiceMode: state.voiceMode,
+        voicePresetId: state.voicePresetId,
+        customVoiceId: state.customVoiceId,
+      };
+      localStorage.setItem(storageKey, JSON.stringify(payload));
+    }
+
+    function hydrateState() {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || '{}');
+      const suggestedBackendBaseUrl = getSuggestedBackendBaseUrl();
+      const savedBackendBaseUrl = normalizeBaseUrl(saved.backendBaseUrl || '', suggestedBackendBaseUrl).replace(/\/api$/, '');
+      state.backendBaseUrl = (!saved.backendBaseUrl || savedBackendBaseUrl === normalizeBaseUrl(window.location.origin, suggestedBackendBaseUrl))
+        ? suggestedBackendBaseUrl
+        : savedBackendBaseUrl;
+      state.routerBaseUrl = saved.routerBaseUrl || 'http://localhost:20128/v1';
+      state.routerModel = saved.routerModel || 'gc/gemini-3-flash-preview';
+      state.routerApiKey = saved.routerApiKey || '';
+      state.email = saved.email || 'learner@scenio.dev';
+      state.password = saved.password || '123456';
+      state.accessToken = saved.accessToken || '';
+      state.autoSpeak = saved.autoSpeak ?? true;
+      state.voiceMode = saved.voiceMode || 'browser';
+      state.voicePresetId = saved.voicePresetId || 'default';
+      state.customVoiceId = saved.customVoiceId || '';
+
+      $('backendBaseUrl').value = state.backendBaseUrl;
+      $('routerBaseUrl').value = state.routerBaseUrl;
+      $('routerModel').value = state.routerModel;
+      $('routerApiKey').value = state.routerApiKey;
+      $('email').value = state.email;
+      $('password').value = state.password;
+      $('autoSpeak').checked = state.autoSpeak;
+      $('voiceMode').value = state.voiceMode;
+      $('customVoiceId').value = state.customVoiceId;
+      $('routerTarget').textContent = state.routerBaseUrl;
+      $('routerModelLabel').textContent = state.routerModel;
+    }
+
+    function syncConfigFromInputs() {
+      state.backendBaseUrl = normalizeBaseUrl($('backendBaseUrl').value, window.location.origin || 'http://localhost:3000').replace(/\/api$/, '');
+      state.routerBaseUrl = normalizeBaseUrl($('routerBaseUrl').value, 'http://localhost:20128/v1');
+      state.routerModel = $('routerModel').value.trim() || 'gc/gemini-3-flash-preview';
+      state.routerApiKey = $('routerApiKey').value.trim();
+      state.email = $('email').value.trim();
+      state.password = $('password').value;
+      state.autoSpeak = $('autoSpeak').checked;
+      state.voiceMode = $('voiceMode').value;
+      state.customVoiceId = $('customVoiceId').value.trim();
+      state.voicePresetId = $('voicePreset').value || state.voicePresetId;
+      $('routerTarget').textContent = state.routerBaseUrl;
+      $('routerModelLabel').textContent = state.routerModel;
+      saveState();
+    }
+
+    function setLog(message) {
+      $('logBox').textContent = message;
+    }
+
+    function setVoiceStatus(message) {
+      $('voiceStatus').textContent = message;
+    }
+
+    function resetSetup() {
+      state.backendBaseUrl = 'http://localhost:3000';
+      state.routerBaseUrl = 'http://localhost:20128/v1';
+      state.routerModel = 'gc/gemini-3-flash-preview';
+      state.routerApiKey = '';
+      state.email = 'learner@scenio.dev';
+      state.password = '123456';
+      $('backendBaseUrl').value = state.backendBaseUrl;
+      $('routerBaseUrl').value = state.routerBaseUrl;
+      $('routerModel').value = state.routerModel;
+      $('routerApiKey').value = '';
+      $('email').value = state.email;
+      $('password').value = state.password;
+      $('voiceMode').value = 'browser';
+      $('customVoiceId').value = '';
+      syncConfigFromInputs();
+      renderVoiceConfig();
+      setLog('Đã reset setup về mặc định local. Nếu đang mở bằng Live Server, cứ để backend là http://localhost:3000.');
+    }
+
+    function looksLikeRouterUrl(value) {
+      return /\/v1$/i.test(value) || /:20128$/i.test(value);
+    }
+
+    function updateStatus() {
+      $('backendStatus').textContent = state.user
+        ? `${state.user.displayName || state.user.email} • ${state.user.level || 'No level'}`
+        : 'Chưa đăng nhập';
+      $('sessionStatus').textContent = state.isListening
+        ? `Đang nghe mic${state.sessionId ? ` • ${state.sessionId.slice(0, 8)}` : ''}`
+        : state.sessionId
+          ? `Active • ${state.sessionId.slice(0, 8)}`
+          : 'Chưa có session';
+    }
+
+    function renderDashboard() {
+      if (!state.dashboard) {
+        $('dashboardBox').innerHTML = '<div class="empty">Đăng nhập xong mình sẽ nạp luôn dashboard, mission hôm nay và session đang dở.</div>';
+        return;
+      }
+
+      const user = state.dashboard.user;
+      const inProgressSession = state.dashboard.inProgressSession;
+      const missions = (state.dashboard.missions || []).map((mission) => `
+        <div class="mission-item">
+          <strong>${escapeHtml(mission.mission?.title || mission.title || 'Mission')}</strong>
+          <div class="hint">${escapeHtml(mission.mission?.description || mission.description || '')}</div>
+        </div>
+      `).join('');
+
+      $('dashboardBox').innerHTML = `
+        <div class="metric"><span>User</span><strong>${escapeHtml(user.displayName || user.email)}</strong></div>
+        <div class="metric"><span>Level</span><strong>${escapeHtml(user.level)}</strong></div>
+        <div class="metric"><span>Total XP</span><strong>${escapeHtml(user.totalXp)}</strong></div>
+        <div class="metric"><span>Streak</span><strong>${escapeHtml(user.streakDays)} ngày</strong></div>
+        <div style="margin-top:12px;">
+          <div class="hint" style="margin-bottom:8px;">Session đang dở</div>
+          ${inProgressSession ? `
+            <div class="scene-item active">
+              <strong>${escapeHtml(inProgressSession.sceneTitle)}</strong>
+              <div class="hint">${escapeHtml(inProgressSession.characterName)} • ${new Date(inProgressSession.startedAt).toLocaleString('vi-VN')}</div>
+              <div class="actions" style="margin-top:10px;">
+                <button class="btn btn-muted" id="adoptActiveSessionBtn">Dùng session này</button>
+                <button class="btn btn-danger" id="abandonActiveSessionBtn">Abandon nó</button>
+              </div>
+            </div>
+          ` : '<div class="empty">Hiện không có session ACTIVE nào trên backend.</div>'}
+        </div>
+        <div style="margin-top:12px;">
+          <div class="hint" style="margin-bottom:8px;">Mission hôm nay</div>
+          <div class="mission-list">${missions || '<div class="empty">Chưa có mission nào.</div>'}</div>
+        </div>
+      `;
+
+      if (inProgressSession) {
+        $('adoptActiveSessionBtn')?.addEventListener('click', adoptInProgressSession);
+        $('abandonActiveSessionBtn')?.addEventListener('click', () => run(abandonSession));
+      }
+    }
+
+    function renderScenes() {
+      const box = $('sceneList');
+      if (!state.scenes.length) {
+        box.innerHTML = '<div class="empty">Bấm load recommend để lấy scene thật từ backend.</div>';
+        return;
+      }
+
+      box.innerHTML = state.scenes.map((scene) => `
+        <div class="scene-item ${scene.id === state.selectedSceneId ? 'active' : ''}">
+          <strong>${escapeHtml(scene.title)}</strong>
+          <div class="hint">${escapeHtml(scene.characterName)} • ${escapeHtml(scene.characterRole)}</div>
+          <div class="hint">${escapeHtml(scene.category)} • ${escapeHtml(scene.difficulty)} • ${escapeHtml(scene.estimatedMinutes)} phút</div>
+          <button class="btn btn-muted" data-scene-id="${scene.id}">Chọn scene này</button>
+        </div>
+      `).join('');
+
+      box.querySelectorAll('[data-scene-id]').forEach((button) => {
+        button.addEventListener('click', () => selectScene(button.getAttribute('data-scene-id')));
+      });
+    }
+
+    function renderSceneDetail() {
+      if (!state.sceneDetail?.scene) {
+        $('sceneDetailBox').innerHTML = '<div class="empty">Chọn một scene bên trái để xem mission, persona và vocabulary gốc của nhân vật.</div>';
+        return;
+      }
+
+      const scene = state.sceneDetail.scene;
+      const vocabulary = (scene.vocabulary || []).map((item) => `
+        <div class="vocab-item">
+          <strong>${escapeHtml(item.word)}</strong>
+          <div class="hint">${escapeHtml(item.definition)}</div>
+          ${item.example ? `<div class="hint">"${escapeHtml(item.example)}"</div>` : ''}
+          <button class="btn btn-muted quick-save" data-scene-vocab-id="${item.id}">Quick save</button>
+        </div>
+      `).join('');
+
+      $('sceneDetailBox').innerHTML = `
+        <div class="metric"><span>Title</span><strong>${escapeHtml(scene.title)}</strong></div>
+        <div class="metric"><span>Character</span><strong>${escapeHtml(scene.characterName)} • ${escapeHtml(scene.characterRole)}</strong></div>
+        <div class="metric"><span>Difficulty</span><strong>${escapeHtml(scene.difficulty)} • ${escapeHtml(scene.estimatedMinutes)} phút</strong></div>
+        <div style="margin:12px 0 8px;"><strong>Mission</strong></div>
+        <div class="hint">${escapeHtml(scene.missionText || scene.description || '')}</div>
+        <div style="margin:16px 0 8px;"><strong>Vocabulary gốc</strong></div>
+        <div class="vocab-list">${vocabulary || '<div class="empty">Scene này chưa có vocabulary seed.</div>'}</div>
+      `;
+
+      $('sceneDetailBox').querySelectorAll('[data-scene-vocab-id]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          await saveVocabulary({ sceneVocabularyId: button.getAttribute('data-scene-vocab-id') });
+        });
+      });
+    }
+
+    function renderMessages() {
+      const box = $('chatStream');
+      if (!state.messages.length) {
+        box.innerHTML = '<div class="empty">Khi bạn start session, opening message của nhân vật sẽ xuất hiện ở đây.</div>';
+        return;
+      }
+
+      box.innerHTML = state.messages.map((message) => `
+        <article class="bubble ${message.role === 'assistant' ? 'ai' : 'user'}">
+          <small>${message.role === 'assistant' ? 'Character' : 'You'}</small>
+          <div>${escapeHtml(message.content)}</div>
+        </article>
+      `).join('');
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function renderVocabulary() {
+      const box = $('vocabList');
+      if (!state.vocabulary.length) {
+        box.innerHTML = '<div class="empty">Chưa có từ nào được lưu trong phiên lab này.</div>';
+        return;
+      }
+
+      box.innerHTML = state.vocabulary.map((item) => `
+        <div class="vocab-item">
+          <strong>${escapeHtml(item.word)}</strong>
+          <div class="hint">${escapeHtml(item.definition)}</div>
+          <div class="hint">saved from ${escapeHtml(item.scene?.title || 'manual')}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderVoiceConfig() {
+      const select = $('voicePreset');
+      const presets = state.voiceConfig?.presets || [];
+
+      select.innerHTML = presets.length
+        ? presets.map((preset) => `<option value="${preset.id}" ${preset.id === state.voicePresetId ? 'selected' : ''}>${escapeHtml(preset.label)}${preset.voiceId ? '' : ' • chưa set'}</option>`).join('')
+        : '<option value="default">Default env voice</option>';
+
+      if (!presets.find((preset) => preset.id === state.voicePresetId) && presets[0]) {
+        state.voicePresetId = presets[0].id;
+        select.value = state.voicePresetId;
+      }
+
+      if (!state.voiceConfig) {
+        setVoiceStatus('Đăng nhập rồi bấm load voice config để test ElevenLabs từ backend.');
+        return;
+      }
+
+      if (!state.voiceConfig.enabled) {
+        setVoiceStatus('Backend chưa có ELEVENLABS_API_KEY, nên chỉ test được Browser speech.');
+        return;
+      }
+
+      const currentVoiceId = getSelectedVoiceId();
+      setVoiceStatus(`ElevenLabs đã sẵn sàng. Voice hiện tại: ${currentVoiceId || 'chưa chọn'} • model ${state.voiceConfig.defaultModelId}`);
+    }
+
+    async function apiFetch(path, options = {}) {
+      syncConfigFromInputs();
+      if (looksLikeRouterUrl(state.backendBaseUrl)) {
+        throw new Error('Backend Base URL đang trỏ sang router. Hãy để backend là http://localhost:3000, còn 9router là http://localhost:20128/v1.');
+      }
+      const headers = { ...(options.headers || {}) };
+      if (state.accessToken) {
+        headers.Authorization = `Bearer ${state.accessToken}`;
+      }
+      if (!headers['Content-Type'] && options.body) {
+        headers['Content-Type'] = 'application/json';
+      }
+
+      const response = await fetch(`${state.backendBaseUrl}${path}`, { ...options, headers });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload?.error?.message || `Request lỗi ${response.status}`;
+        const details = Array.isArray(payload?.error?.details)
+          ? payload.error.details.map((detail) => `${detail.field}: ${detail.message}`).join(' | ')
+          : '';
+        throw new Error(`${options.method || 'GET'} ${path}: ${message}${details ? ` (${details})` : ''}`);
+      }
+      return payload?.data;
+    }
+
+    async function apiFetchBlob(path, options = {}) {
+      syncConfigFromInputs();
+      const headers = { ...(options.headers || {}) };
+      if (state.accessToken) {
+        headers.Authorization = `Bearer ${state.accessToken}`;
+      }
+      if (!headers['Content-Type'] && options.body) {
+        headers['Content-Type'] = 'application/json';
+      }
+
+      const response = await fetch(`${state.backendBaseUrl}${path}`, { ...options, headers });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message = payload?.error?.message || `Request lỗi ${response.status}`;
+        const details = Array.isArray(payload?.error?.details)
+          ? payload.error.details.map((detail) => `${detail.field}: ${detail.message}`).join(' | ')
+          : '';
+        throw new Error(`${options.method || 'GET'} ${path}: ${message}${details ? ` (${details})` : ''}`);
+      }
+
+      return {
+        blob: await response.blob(),
+        headers: response.headers,
+      };
+    }
+
+    function getSelectedVoiceId() {
+      const customVoiceId = state.customVoiceId || $('customVoiceId').value.trim();
+      if (customVoiceId) {
+        return customVoiceId;
+      }
+
+      const presetId = $('voicePreset').value || state.voicePresetId;
+      const preset = state.voiceConfig?.presets?.find((item) => item.id === presetId);
+      return preset?.voiceId || state.voiceConfig?.defaultVoiceId || '';
+    }
+
+    function buildSystemPrompt() {
+      const scene = state.sceneDetail?.scene;
+      const userLevel = state.dashboard?.user?.level || 'A2';
+      return [
+        'You are roleplaying as a speaking partner inside an English learning app named Scenio.',
+        `Stay in character as ${scene?.characterName || 'the guide'}, who is ${scene?.characterRole || 'a helpful conversation partner'}.`,
+        `The scenario title is "${scene?.title || 'General English practice'}".`,
+        `Mission: ${scene?.missionText || scene?.description || 'Keep the conversation practical and natural.'}`,
+        `The learner level is ${userLevel}. Keep replies short, natural, and easy to continue.`,
+        'Each reply should be 2 to 4 sentences, ask one follow-up question, and avoid giving long explanations unless the learner asks.',
+        'If the learner makes a mistake, respond naturally first and only give a light correction inside parentheses when very useful.',
+      ].join(' ');
+    }
+
+    async function proxyRouterChat(userText) {
+      const modelMessages = state.messages
+        .slice(-10)
+        .map((message) => ({
+          role: message.role === 'assistant' ? 'assistant' : 'user',
+          content: message.content,
+        }));
+
+      const result = await apiFetch('/api/lab/chat-proxy', {
+        method: 'POST',
+        body: JSON.stringify({
+          apiBaseUrl: state.routerBaseUrl,
+          apiKey: state.routerApiKey,
+          model: state.routerModel,
+          systemPrompt: buildSystemPrompt(),
+          messages: modelMessages,
+          temperature: 0.7,
+          maxTokens: 400,
+        }),
+      });
+
+      return result.reply;
+    }
+
+    async function login() {
+      syncConfigFromInputs();
+      const result = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: state.email,
+          password: state.password,
+        }),
+      });
+
+      state.accessToken = result.accessToken;
+      state.user = result.user;
+      saveState();
+      updateStatus();
+      setLog(`Đăng nhập thành công cho ${result.user.displayName || result.user.email}.`);
+      await Promise.all([loadDashboard(), loadRecommendedScenes(), loadVocabulary(), loadVoiceConfig()]);
+    }
+
+    async function verifyToken() {
+      if (!state.accessToken) return;
+      const user = await apiFetch('/api/auth/verify-token', { method: 'GET' });
+      state.user = user;
+      updateStatus();
+    }
+
+    async function loadDashboard() {
+      state.dashboard = await apiFetch('/api/home/dashboard', { method: 'GET' });
+      if (state.dashboard?.inProgressSession?.id && !state.sessionId) {
+        state.sessionId = state.dashboard.inProgressSession.id;
+      }
+      renderDashboard();
+      updateStatus();
+    }
+
+    function adoptInProgressSession() {
+      const inProgressSession = state.dashboard?.inProgressSession;
+      if (!inProgressSession) {
+        throw new Error('Hiện không có session ACTIVE nào để dùng.');
+      }
+
+      state.sessionId = inProgressSession.id;
+      updateStatus();
+      setLog(`Đã gắn vào session đang dở: ${inProgressSession.sceneTitle}. Hiện lab chưa load transcript cũ, nhưng bạn đã có thể abandon hoặc dùng ID này để debug tiếp.`);
+    }
+
+    async function loadRecommendedScenes() {
+      try {
+        const result = await apiFetch('/api/scenes/recommend?limit=5', { method: 'GET' });
+        state.scenes = result.scenes || [];
+      } catch (error) {
+        const result = await apiFetch('/api/scenes?limit=5&page=1', { method: 'GET' });
+        state.scenes = result.scenes || [];
+      }
+      renderScenes();
+    }
+
+    async function loadSceneListFallback() {
+      const result = await apiFetch('/api/scenes?limit=5&page=1', { method: 'GET' });
+      state.scenes = result.scenes || [];
+      renderScenes();
+      setLog('Đã nạp scene list fallback.');
+    }
+
+    async function selectScene(sceneId) {
+      state.selectedSceneId = sceneId;
+      state.sceneDetail = await apiFetch(`/api/scenes/${sceneId}`, { method: 'GET' });
+      state.sessionId = '';
+      state.messages = [];
+      renderScenes();
+      renderSceneDetail();
+      renderMessages();
+      updateStatus();
+      setLog(`Đã chọn scene ${state.sceneDetail.scene.title}. Bạn có thể start session ngay.`);
+    }
+
+    async function startSession() {
+      if (!state.selectedSceneId) {
+        throw new Error('Hãy chọn scene trước khi start session.');
+      }
+      const result = await apiFetch('/api/sessions/start', {
+        method: 'POST',
+        body: JSON.stringify({ sceneId: state.selectedSceneId }),
+      });
+      state.sessionId = result.sessionId;
+      state.messages = [{ role: 'assistant', content: result.openingMessage }];
+      renderMessages();
+      updateStatus();
+      try {
+        await speakText(result.openingMessage);
+      } catch (error) {
+        setLog(`Opening audio lỗi: ${error.message}`);
+      }
+      setLog('Session thật đã được tạo. Các lượt tiếp theo đang chạy theo chế độ lab qua 9router.');
+    }
+
+    async function sendUserTurn(rawText) {
+      const text = rawText.trim();
+      if (!text) return;
+      if (!state.routerApiKey) {
+        throw new Error('Chưa có 9router key để gọi model.');
+      }
+      if (!state.sessionId) {
+        await startSession();
+      }
+
+      state.messages.push({ role: 'user', content: text });
+      renderMessages();
+      $('composer').value = '';
+      setLog('Đang gọi 9router để lấy reply của nhân vật...');
+
+      const reply = await proxyRouterChat(text);
+      state.messages.push({ role: 'assistant', content: reply });
+      renderMessages();
+      try {
+        await speakText(reply);
+      } catch (error) {
+        setLog(`Reply audio lỗi: ${error.message}`);
+      }
+      setLog('Đã nhận reply từ 9router. Nếu thấy hợp persona thì mình có thể tiến tới làm endpoint session message thật.');
+    }
+
+    async function testRouterConnection() {
+      if (!state.accessToken) {
+        throw new Error('Đăng nhập trước để dùng lab proxy.');
+      }
+      if (!state.routerApiKey) {
+        throw new Error('Chưa nhập 9router key.');
+      }
+      setLog('Đang test kết nối 9router...');
+      const result = await apiFetch('/api/lab/chat-proxy', {
+        method: 'POST',
+        body: JSON.stringify({
+          apiBaseUrl: state.routerBaseUrl,
+          apiKey: state.routerApiKey,
+          model: state.routerModel,
+          messages: [{ role: 'user', content: 'Say hello as a warm English speaking partner in one short sentence.' }],
+          temperature: 0.4,
+          maxTokens: 120,
+        }),
+      });
+      setLog(`9router OK: ${result.reply}`);
+    }
+
+    async function loadVoiceConfig() {
+      const result = await apiFetch('/api/lab/elevenlabs-config', { method: 'GET' });
+      state.voiceConfig = result;
+      renderVoiceConfig();
+    }
+
+    async function loadVocabulary() {
+      const result = await apiFetch('/api/vocabulary?limit=8&page=1', { method: 'GET' });
+      state.vocabulary = result.vocabulary || [];
+      renderVocabulary();
+    }
+
+    async function saveVocabulary({ sceneVocabularyId, word, definition }) {
+      if (!sceneVocabularyId && (!word || !definition)) {
+        throw new Error('Nhập đủ word và definition, hoặc dùng quick save từ scene vocabulary.');
+      }
+
+      const body = {
+        sceneVocabularyId: sceneVocabularyId || undefined,
+        word: word || undefined,
+        definition: definition || undefined,
+        sourceSessionId: state.sessionId || null,
+      };
+
+      await apiFetch('/api/vocabulary', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+
+      await loadVocabulary();
+      if (word) {
+        $('manualWord').value = '';
+        $('manualDefinition').value = '';
+      }
+      setLog('Đã lưu vocabulary vào backend thật.');
+    }
+
+    async function abandonSession() {
+      if (!state.sessionId) {
+        throw new Error('Hiện chưa có session nào để abandon.');
+      }
+
+      const result = await apiFetch(`/api/sessions/${state.sessionId}/abandon`, {
+        method: 'PATCH',
+      });
+
+      state.sessionId = '';
+      if (state.dashboard?.inProgressSession?.id === result.id) {
+        state.dashboard.inProgressSession = null;
+      } else if (state.dashboard?.inProgressSession?.id) {
+        state.dashboard.inProgressSession = null;
+      }
+      renderDashboard();
+      updateStatus();
+      setLog(`Session đã được đóng với trạng thái ${result.status}.`);
+    }
+
+    function stopCurrentAudio() {
+      if (state.currentAudio) {
+        state.currentAudio.pause();
+        URL.revokeObjectURL(state.currentAudio.src);
+        state.currentAudio = null;
+      }
+
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    }
+
+    async function playElevenLabsText(text) {
+      if (!state.voiceConfig?.enabled) {
+        throw new Error('Backend chưa cấu hình ELEVENLABS_API_KEY để phát voice thật.');
+      }
+
+      const voiceId = getSelectedVoiceId();
+      if (!voiceId) {
+        throw new Error('Chưa có voice_id khả dụng. Hãy chọn preset khác hoặc dán custom voice id.');
+      }
+
+      setVoiceStatus(`Đang synth audio bằng ElevenLabs với voice ${voiceId}...`);
+      const result = await apiFetchBlob('/api/lab/elevenlabs-speech', {
+        method: 'POST',
+        body: JSON.stringify({
+          text,
+          voiceId,
+          modelId: state.voiceConfig.defaultModelId,
+        }),
+      });
+
+      stopCurrentAudio();
+      const objectUrl = URL.createObjectURL(result.blob);
+      const audio = new Audio(objectUrl);
+      state.currentAudio = audio;
+      audio.addEventListener('ended', () => {
+        if (state.currentAudio === audio) {
+          state.currentAudio = null;
+        }
+        URL.revokeObjectURL(objectUrl);
+      });
+      await audio.play();
+      setVoiceStatus(`Đang phát voice ${result.headers.get('X-Voice-Id') || voiceId}`);
+    }
+
+    async function previewSelectedVoice() {
+      if (state.voiceMode !== 'elevenlabs') {
+        throw new Error('Hãy chuyển Voice mode sang ElevenLabs để preview voice thật.');
+      }
+
+      const previewText = $('voicePreviewText').value.trim();
+      if (!previewText) {
+        throw new Error('Nhập preview text trước khi preview voice.');
+      }
+
+      await playElevenLabsText(previewText);
+    }
+
+    async function speakText(text) {
+      if (!state.autoSpeak) return;
+
+      if (state.voiceMode === 'elevenlabs') {
+        await playElevenLabsText(text);
+        return;
+      }
+
+      if (!('speechSynthesis' in window)) return;
+      stopCurrentAudio();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function initSpeechRecognition() {
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!Recognition) {
+        $('pttBtn').disabled = true;
+        $('pttBtn').textContent = 'PTT không hỗ trợ';
+        return;
+      }
+
+      const recognition = new Recognition();
+      recognition.lang = 'en-US';
+      recognition.interimResults = true;
+      recognition.continuous = false;
+
+      recognition.onstart = () => {
+        state.isListening = true;
+        updateStatus();
+        setLog('Mic đang nghe. Nói xong thì browser sẽ tự gửi message.');
+      };
+
+      recognition.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          transcript += event.results[i][0].transcript;
+        }
+        $('composer').value = transcript.trim();
+      };
+
+      recognition.onerror = (event) => {
+        setLog(`Mic error: ${event.error}`);
+      };
+
+      recognition.onend = async () => {
+        state.isListening = false;
+        updateStatus();
+        const transcript = $('composer').value.trim();
+        if (!transcript) {
+          setLog('Không bắt được transcript nào từ mic.');
+          return;
+        }
+        try {
+          await sendUserTurn(transcript);
+        } catch (error) {
+          setLog(error.message);
+        }
+      };
+
+      state.recognition = recognition;
+    }
+
+    function toggleListening() {
+      if (!state.recognition) {
+        setLog('Browser này chưa hỗ trợ SpeechRecognition.');
+        return;
+      }
+
+      if (state.isListening) {
+        state.recognition.stop();
+        return;
+      }
+
+      $('composer').value = '';
+      state.recognition.start();
+    }
+
+    function wireEvents() {
+      [
+        'backendBaseUrl',
+        'routerBaseUrl',
+        'routerModel',
+        'routerApiKey',
+        'email',
+        'password',
+        'voiceMode',
+        'voicePreset',
+        'customVoiceId',
+      ].forEach((id) => {
+        $(id).addEventListener('input', syncConfigFromInputs);
+      });
+
+      $('loginBtn').addEventListener('click', () => run(login));
+      $('routerTestBtn').addEventListener('click', () => run(testRouterConnection));
+      $('resetSetupBtn').addEventListener('click', resetSetup);
+      $('loadVoiceConfigBtn').addEventListener('click', () => run(loadVoiceConfig));
+      $('previewVoiceBtn').addEventListener('click', () => run(previewSelectedVoice));
+      $('stopVoiceBtn').addEventListener('click', stopCurrentAudio);
+      $('recommendBtn').addEventListener('click', () => run(loadRecommendedScenes));
+      $('reloadScenesBtn').addEventListener('click', () => run(loadSceneListFallback));
+      $('startSessionBtn').addEventListener('click', () => run(startSession));
+      $('abandonBtn').addEventListener('click', () => run(abandonSession));
+      $('sendBtn').addEventListener('click', () => run(() => sendUserTurn($('composer').value)));
+      $('pttBtn').addEventListener('click', () => run(toggleListening));
+      $('loadVocabBtn').addEventListener('click', () => run(loadVocabulary));
+      $('saveManualBtn').addEventListener('click', () => run(() => saveVocabulary({
+        word: $('manualWord').value.trim(),
+        definition: $('manualDefinition').value.trim(),
+      })));
+      $('autoSpeak').addEventListener('change', syncConfigFromInputs);
+      $('composer').addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          run(() => sendUserTurn($('composer').value));
+        }
+      });
+    }
+
+    async function bootstrap() {
+      hydrateState();
+      initSpeechRecognition();
+      wireEvents();
+      renderDashboard();
+      renderScenes();
+      renderSceneDetail();
+      renderMessages();
+      renderVocabulary();
+      renderVoiceConfig();
+      updateStatus();
+
+      if (!state.accessToken) {
+        setLog('Nhập key 9router rồi đăng nhập để chạy lab end-to-end.');
+        return;
+      }
+
+      try {
+        await verifyToken();
+        await Promise.all([loadDashboard(), loadRecommendedScenes(), loadVocabulary(), loadVoiceConfig()]);
+        setLog('Đã restore phiên lab từ localStorage.');
+      } catch (error) {
+        state.accessToken = '';
+        state.user = null;
+        saveState();
+        updateStatus();
+        setLog(`Token cũ không còn hợp lệ: ${error.message}`);
+      }
+    }
+
+    async function run(fn) {
+      try {
+        await fn();
+      } catch (error) {
+        setLog(error.message || 'Có lỗi xảy ra.');
+      }
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>
