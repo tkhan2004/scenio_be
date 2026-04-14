@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { auth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import {
+  addXpSchema,
   getBadgesSchema,
   getMeSchema,
   getProgressSchema,
@@ -9,6 +10,7 @@ import {
   updateOnboardingSchema,
 } from '../../schemas/users';
 import {
+  addXpController,
   getBadgesController,
   getMeController,
   getProgressController,
@@ -29,6 +31,12 @@ router.get('/me', auth, validate(getMeSchema), getMeController);
  * @desc    Lưu hoặc skip onboarding survey cho user hiện tại
  */
 router.patch('/me/onboarding', auth, validate(updateOnboardingSchema), updateOnboardingController);
+
+/**
+ * @route   POST /api/users/xp
+ * @desc    Cộng XP cho session COMPLETED và cập nhật streak/missions
+ */
+router.post('/xp', auth, validate(addXpSchema), addXpController);
 
 /**
  * @route   GET /api/users/progress

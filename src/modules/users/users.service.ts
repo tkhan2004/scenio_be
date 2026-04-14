@@ -1,4 +1,7 @@
-import { UpdateMeInput, UpdateOnboardingInput } from '../../schemas/users';
+import { ConditionType, MissionType } from '@prisma/client';
+import prisma from '../../config/database';
+import { AddXpInput, UpdateMeInput, UpdateOnboardingInput } from '../../schemas/users';
+import * as missionsService from '../missions/missions.service';
 import * as usersRepo from './users.repository';
 
 function buildUserProfile(user: NonNullable<Awaited<ReturnType<typeof usersRepo.findPublicUserProfileById>>>) {
@@ -9,6 +12,24 @@ function buildUserProfile(user: NonNullable<Awaited<ReturnType<typeof usersRepo.
 }
 
 type ProgressSessionRecord = Awaited<ReturnType<typeof usersRepo.findCompletedSessionsForProgress>>[number];
+type TodayMissionRecord = Awaited<ReturnType<typeof usersRepo.findTodayUserMissions>>[number];
+type BadgeRecord = Awaited<ReturnType<typeof usersRepo.findActiveBadgesWithEarnedStatus>>[number];
+
+/**
+ * Helper - getTodayDateString
+ * Summary: Trả về ngày hiện tại dạng YYYY-MM-DD để đồng bộ với user_missions.
+ */
+function getTodayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Helper - dateFromDateString
+ * Summary: Chuyển YYYY-MM-DD thành Date UTC midnight cho field lastActiveDate.
+ */
+function dateFromDateString(value: string) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
 
 /**
  * Helper - averageScore
@@ -52,6 +73,110 @@ function buildWeeklyXp(sessions: ProgressSessionRecord[]) {
   }
 
   return days;
+}
+
+/**
+ * Helper - getSessionAverageScore
+ * Summary: Tính điểm trung bình của một session từ 3 trục grammar/vocabulary/naturalness.
+ */
+function getSessionAverageScore(session: {
+  grammarScore: number | null;
+  vocabularyScore: number | null;
+  naturalnessScore: number | null;
+}) {
+  const values = [session.grammarScore, session.vocabularyScore, session.naturalnessScore]
+    .filter((value): value is number => typeof value === 'number');
+
+  if (values.length === 0) return 0;
+
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return Math.round(total / values.length);
+}
+
+/**
+ * Helper - getHighestAverageScore
+ * Summary: Lấy average score cao nhất từ toàn bộ completed sessions.
+ */
+function getHighestAverageScore(
+  sessions: Awaited<ReturnType<typeof usersRepo.findCompletedSessionScores>>,
+) {
+  if (sessions.length === 0) return 0;
+
+  return Math.max(...sessions.map((session) => getSessionAverageScore(session)));
+}
+
+/**
+ * Helper - calculateNextStreak
+ * Summary: Tính streak kế tiếp dựa trên lastActiveDate hiện tại và ngày hôm nay.
+ */
+function calculateNextStreak(currentStreak: number, lastActiveDate: Date | null, today: string) {
+  if (!lastActiveDate) {
+    return 1;
+  }
+
+  const lastDate = lastActiveDate.toISOString().slice(0, 10);
+  if (lastDate === today) {
+    return currentStreak;
+  }
+
+  const yesterday = dateFromDateString(today);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const yesterdayKey = yesterday.toISOString().slice(0, 10);
+
+  if (lastDate === yesterdayKey) {
+    return currentStreak + 1;
+  }
+
+  return 1;
+}
+
+/**
+ * Helper - getNextMissionValue
+ * Summary: Tính progress mới cho từng loại mission khi session được grant XP.
+ */
+function getNextMissionValue(mission: TodayMissionRecord, sessionAverageScore: number, nextStreak: number) {
+  switch (mission.mission.missionType) {
+    case MissionType.COMPLETE_SCENE:
+      return mission.currentValue + 1;
+    case MissionType.ACHIEVE_SCORE:
+      return Math.max(mission.currentValue, sessionAverageScore);
+    case MissionType.MAINTAIN_STREAK:
+      return Math.max(mission.currentValue, nextStreak);
+    case MissionType.SAVE_VOCABULARY:
+    default:
+      return mission.currentValue;
+  }
+}
+
+/**
+ * Helper - isBadgeEligible
+ * Summary: Kiểm tra user đã đủ điều kiện để nhận badge hay chưa.
+ */
+function isBadgeEligible(
+  badge: BadgeRecord,
+  metrics: {
+    completedSessions: number;
+    streakDays: number;
+    highestAverageScore: number;
+    savedVocabulary: number;
+  },
+) {
+  switch (badge.conditionType) {
+    case ConditionType.FIRST_SESSION:
+      return metrics.completedSessions >= badge.conditionValue;
+    case ConditionType.SCENES_COMPLETED:
+      return metrics.completedSessions >= badge.conditionValue;
+    case ConditionType.STREAK_DAYS:
+      return metrics.streakDays >= badge.conditionValue;
+    case ConditionType.HIGH_SCORE:
+      return metrics.highestAverageScore >= badge.conditionValue;
+    case ConditionType.PERFECT_SCORE:
+      return metrics.highestAverageScore >= badge.conditionValue;
+    case ConditionType.VOCAB_SAVED:
+      return metrics.savedVocabulary >= badge.conditionValue;
+    default:
+      return false;
+  }
 }
 
 /**
@@ -135,6 +260,164 @@ export async function updateMe(userId: string, input: UpdateMeInput) {
       updatedAt: updatedUser.updatedAt,
     }),
   };
+}
+
+/**
+ * Function Objective - addXp
+ * Summary: Cộng XP cho session COMPLETED, đồng thời cập nhật streak và daily missions.
+ * Inputs: userId từ access token và sessionId đã validate.
+ * Behavior: Đảm bảo mission hôm nay tồn tại -> kiểm tra idempotent qua xpGrantedAt -> update session/user/missions/badges trong transaction.
+ * Returns: totalXp mới, streakDays mới, và danh sách missions vừa complete ở lần grant này.
+ */
+export async function addXp(userId: string, input: AddXpInput) {
+  const today = getTodayDateString();
+  await missionsService.ensureTodayMissions(userId, today);
+
+  return prisma.$transaction(async (tx) => {
+    const user = await usersRepo.findUserById(userId, tx);
+    if (!user) {
+      throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+    }
+
+    const session = await usersRepo.findSessionForXpGrant(userId, input.sessionId, tx);
+    if (!session) {
+      throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+    }
+
+    if (session.status !== 'COMPLETED') {
+      throw Object.assign(new Error('Chỉ có thể cộng XP cho session đã hoàn thành'), {
+        code: 'SESSION_NOT_COMPLETED',
+        status: 409,
+      });
+    }
+
+    if (session.xpGrantedAt) {
+      return {
+        totalXp: user.totalXp,
+        streakDays: user.streakDays,
+        missionsCompleted: [],
+      };
+    }
+
+    const sessionAverageScore = getSessionAverageScore(session);
+    const nextStreak = calculateNextStreak(user.streakDays, user.lastActiveDate, today);
+    const todayMissions = await usersRepo.findTodayUserMissions(userId, today, tx);
+
+    let missionBonusXp = 0;
+    const missionsCompleted: Array<{
+      id: string;
+      missionId: string;
+      title: string;
+      description: string;
+      missionType: string;
+      target: number;
+      current: number;
+      xp: number;
+      completedAt: Date | null;
+    }> = [];
+
+    for (const mission of todayMissions) {
+      const nextValue = getNextMissionValue(mission, sessionAverageScore, nextStreak);
+      const shouldComplete = !mission.isCompleted && nextValue >= mission.mission.targetValue;
+      const shouldUpdate = nextValue !== mission.currentValue || shouldComplete;
+
+      if (!shouldUpdate) {
+        continue;
+      }
+
+      const completedAt = shouldComplete ? new Date() : mission.completedAt;
+      const updatedMission = await usersRepo.updateUserMissionById(
+        mission.id,
+        {
+          currentValue: nextValue,
+          isCompleted: mission.isCompleted || shouldComplete,
+          completedAt,
+        },
+        tx,
+      );
+
+      if (shouldComplete) {
+        missionBonusXp += updatedMission.mission.xpReward;
+        missionsCompleted.push({
+          id: updatedMission.id,
+          missionId: updatedMission.missionId,
+          title: updatedMission.mission.title,
+          description: updatedMission.mission.description,
+          missionType: updatedMission.mission.missionType,
+          target: updatedMission.mission.targetValue,
+          current: updatedMission.currentValue,
+          xp: updatedMission.mission.xpReward,
+          completedAt: updatedMission.completedAt,
+        });
+      }
+    }
+
+    const [completedSessions, completedSessionScores, savedVocabulary, badges] = await Promise.all([
+      usersRepo.countCompletedSessions(userId, tx),
+      usersRepo.findCompletedSessionScores(userId, tx),
+      usersRepo.countSavedVocabulary(userId, tx),
+      usersRepo.findActiveBadgesWithEarnedStatus(userId, tx),
+    ]);
+
+    const highestAverageScore = Math.max(
+      sessionAverageScore,
+      getHighestAverageScore(completedSessionScores),
+    );
+
+    let badgeBonusXp = 0;
+    for (const badge of badges) {
+      if (badge.userBadges.length > 0) {
+        continue;
+      }
+
+      const eligible = isBadgeEligible(badge, {
+        completedSessions,
+        streakDays: nextStreak,
+        highestAverageScore,
+        savedVocabulary,
+      });
+
+      if (!eligible) {
+        continue;
+      }
+
+      await usersRepo.createUserBadge(
+        {
+          userId,
+          badgeId: badge.id,
+          earnedAt: new Date(),
+        },
+        tx,
+      );
+      badgeBonusXp += badge.xpReward;
+    }
+
+    const updatedUser = await usersRepo.updateUserById(
+      userId,
+      {
+        totalXp: {
+          increment: session.xpEarned + missionBonusXp + badgeBonusXp,
+        },
+        streakDays: nextStreak,
+        lastActiveDate: dateFromDateString(today),
+      },
+      tx,
+    );
+
+    await usersRepo.updateSessionById(
+      session.id,
+      {
+        xpGrantedAt: new Date(),
+      },
+      tx,
+    );
+
+    return {
+      totalXp: updatedUser.totalXp,
+      streakDays: updatedUser.streakDays,
+      missionsCompleted,
+    };
+  });
 }
 
 /**

@@ -1,29 +1,50 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../../config/database';
 
+type DbClient = Prisma.TransactionClient | typeof prisma;
+
+const todayMissionSelect = {
+  id: true,
+  missionId: true,
+  date: true,
+  currentValue: true,
+  isCompleted: true,
+  completedAt: true,
+  mission: {
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      missionType: true,
+      targetValue: true,
+      xpReward: true,
+    },
+  },
+} as const;
+
 /**
  * Repository - Users
- * Summary: Quản lý truy vấn dữ liệu cho user profile, onboarding, progress và badges.
+ * Summary: Quản lý truy vấn dữ liệu cho user profile, progress, badges, và reward flow.
  */
 
 /**
  * Query Objective - findUserById
- * Summary: Lấy user theo id để kiểm tra tồn tại trước khi update onboarding.
+ * Summary: Lấy user theo id để kiểm tra tồn tại hoặc đọc progress hiện tại.
  * Query Shape: findUnique theo id.
  */
-export async function findUserById(id: string) {
-  return prisma.user.findUnique({
+export async function findUserById(id: string, db: DbClient = prisma) {
+  return db.user.findUnique({
     where: { id },
   });
 }
 
 /**
  * Query Objective - updateUserById
- * Summary: Cập nhật dữ liệu onboarding hoặc profile của user.
+ * Summary: Cập nhật dữ liệu onboarding, profile, hoặc chỉ số gamification của user.
  * Query Shape: update theo id với Prisma.UserUpdateInput.
  */
-export async function updateUserById(id: string, data: Prisma.UserUpdateInput) {
-  return prisma.user.update({
+export async function updateUserById(id: string, data: Prisma.UserUpdateInput, db: DbClient = prisma) {
+  return db.user.update({
     where: { id },
     data,
   });
@@ -34,8 +55,8 @@ export async function updateUserById(id: string, data: Prisma.UserUpdateInput) {
  * Summary: Lấy đầy đủ profile public của user hiện tại cho màn hình profile.
  * Query Shape: findUnique + select toàn bộ field client-safe, không gồm password.
  */
-export async function findPublicUserProfileById(id: string) {
-  return prisma.user.findUnique({
+export async function findPublicUserProfileById(id: string, db: DbClient = prisma) {
+  return db.user.findUnique({
     where: { id },
     select: {
       id: true,
@@ -65,8 +86,8 @@ export async function findPublicUserProfileById(id: string) {
  * Summary: Lấy snapshot tiến độ tổng quan của user cho progress screen.
  * Query Shape: findUnique + select level, totalXp, streakDays, lastActiveDate.
  */
-export async function findProgressUserById(id: string) {
-  return prisma.user.findUnique({
+export async function findProgressUserById(id: string, db: DbClient = prisma) {
+  return db.user.findUnique({
     where: { id },
     select: {
       id: true,
@@ -83,8 +104,8 @@ export async function findProgressUserById(id: string) {
  * Summary: Lấy toàn bộ completed sessions cần thiết để tính biểu đồ và history.
  * Query Shape: findMany theo userId + status COMPLETED, include scene summary.
  */
-export async function findCompletedSessionsForProgress(userId: string) {
-  return prisma.session.findMany({
+export async function findCompletedSessionsForProgress(userId: string, db: DbClient = prisma) {
+  return db.session.findMany({
     where: {
       userId,
       status: 'COMPLETED',
@@ -117,8 +138,8 @@ export async function findCompletedSessionsForProgress(userId: string) {
  * Summary: Lấy tất cả badge active cùng trạng thái earned của user hiện tại.
  * Query Shape: findMany badge active + include userBadges filtered by userId.
  */
-export async function findActiveBadgesWithEarnedStatus(userId: string) {
-  return prisma.badge.findMany({
+export async function findActiveBadgesWithEarnedStatus(userId: string, db: DbClient = prisma) {
+  return db.badge.findMany({
     where: {
       isActive: true,
     },
@@ -138,6 +159,145 @@ export async function findActiveBadgesWithEarnedStatus(userId: string) {
         },
         take: 1,
       },
+    },
+  });
+}
+
+/**
+ * Query Objective - findSessionForXpGrant
+ * Summary: Lấy session COMPLETED để cộng XP, kèm cờ xpGrantedAt cho idempotency.
+ * Query Shape: findFirst theo sessionId + userId.
+ */
+export async function findSessionForXpGrant(userId: string, sessionId: string, db: DbClient = prisma) {
+  return db.session.findFirst({
+    where: {
+      id: sessionId,
+      userId,
+    },
+    select: {
+      id: true,
+      status: true,
+      grammarScore: true,
+      vocabularyScore: true,
+      naturalnessScore: true,
+      xpEarned: true,
+      xpGrantedAt: true,
+      endedAt: true,
+    },
+  });
+}
+
+/**
+ * Query Objective - updateSessionById
+ * Summary: Cập nhật metadata session theo id, dùng để đánh dấu đã grant XP.
+ * Query Shape: update theo sessionId.
+ */
+export async function updateSessionById(
+  sessionId: string,
+  data: Prisma.SessionUpdateInput,
+  db: DbClient = prisma,
+) {
+  return db.session.update({
+    where: { id: sessionId },
+    data,
+    select: {
+      id: true,
+      xpGrantedAt: true,
+    },
+  });
+}
+
+/**
+ * Query Objective - findTodayUserMissions
+ * Summary: Lấy daily missions của user trong ngày để update progress.
+ * Query Shape: findMany theo userId + date, include mission metadata.
+ */
+export async function findTodayUserMissions(userId: string, date: string, db: DbClient = prisma) {
+  return db.userMission.findMany({
+    where: {
+      userId,
+      date,
+    },
+    orderBy: [{ missionId: 'asc' }],
+    select: todayMissionSelect,
+  });
+}
+
+/**
+ * Query Objective - updateUserMissionById
+ * Summary: Cập nhật progress/completion cho một user mission cụ thể.
+ * Query Shape: update theo userMissionId.
+ */
+export async function updateUserMissionById(
+  id: string,
+  data: Prisma.UserMissionUpdateInput,
+  db: DbClient = prisma,
+) {
+  return db.userMission.update({
+    where: { id },
+    data,
+    select: todayMissionSelect,
+  });
+}
+
+/**
+ * Query Objective - countCompletedSessions
+ * Summary: Đếm số session COMPLETED của user để xét badge.
+ * Query Shape: count theo userId + status COMPLETED.
+ */
+export async function countCompletedSessions(userId: string, db: DbClient = prisma) {
+  return db.session.count({
+    where: {
+      userId,
+      status: 'COMPLETED',
+    },
+  });
+}
+
+/**
+ * Query Objective - findCompletedSessionScores
+ * Summary: Lấy điểm của completed sessions để tính high score badge.
+ * Query Shape: findMany theo userId + status COMPLETED.
+ */
+export async function findCompletedSessionScores(userId: string, db: DbClient = prisma) {
+  return db.session.findMany({
+    where: {
+      userId,
+      status: 'COMPLETED',
+    },
+    select: {
+      grammarScore: true,
+      vocabularyScore: true,
+      naturalnessScore: true,
+    },
+  });
+}
+
+/**
+ * Query Objective - countSavedVocabulary
+ * Summary: Đếm tổng số user vocabulary đã lưu để xét badge VOCAB_SAVED.
+ * Query Shape: count theo userId.
+ */
+export async function countSavedVocabulary(userId: string, db: DbClient = prisma) {
+  return db.userVocabulary.count({
+    where: { userId },
+  });
+}
+
+/**
+ * Query Objective - createUserBadge
+ * Summary: Tạo bản ghi earned badge mới cho user.
+ * Query Shape: create vào user_badges.
+ */
+export async function createUserBadge(
+  data: { userId: string; badgeId: string; earnedAt: Date },
+  db: DbClient = prisma,
+) {
+  return db.userBadge.create({
+    data,
+    select: {
+      id: true,
+      earnedAt: true,
     },
   });
 }
