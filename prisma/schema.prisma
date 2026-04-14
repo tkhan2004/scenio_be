@@ -16,25 +16,25 @@ datasource db {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model User {
-  id             String    @id @default(uuid())
-  email          String    @unique
-  password       String? // null nếu đăng nhập Google OAuth
-  googleId       String?   @unique // null nếu đăng nhập email
-  displayName    String?
-  avatarUrl      String?
-  level          Level     @default(A2)
-  learningGoal   String?
-  studyFrequency String?
-  selfAssessment String?
-  needsLevelTest Boolean   @default(true)
-  levelTestedAt  DateTime?
+  id                    String    @id @default(uuid())
+  email                 String    @unique
+  password              String? // null nếu đăng nhập Google OAuth
+  googleId              String?   @unique // null nếu đăng nhập email
+  displayName           String?
+  avatarUrl             String?
+  level                 Level     @default(A2)
+  learningGoal          String?
+  studyFrequency        String?
+  selfAssessment        String?
+  needsLevelTest        Boolean   @default(true)
+  levelTestedAt         DateTime?
   onboardingCompletedAt DateTime?
-  totalXp        Int       @default(0)
-  streakDays     Int       @default(0)
-  lastActiveDate DateTime? @db.Date // DATE thay vì timestamp để tính streak dễ hơn
-  isAdmin        Boolean   @default(false)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  totalXp               Int       @default(0)
+  streakDays            Int       @default(0)
+  lastActiveDate        DateTime? @db.Date // DATE thay vì timestamp để tính streak dễ hơn
+  isAdmin               Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   sessions       Session[]
   userMissions   UserMission[]
@@ -110,6 +110,7 @@ model Session {
   vocabularyScore  Float?
   naturalnessScore Float?
   xpEarned         Int           @default(0)
+  xpGrantedAt      DateTime?
   hintCount        Int           @default(0) // tổng số lần dùng hint trong session
   startedAt        DateTime      @default(now())
   endedAt          DateTime?
