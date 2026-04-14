@@ -39,28 +39,28 @@
 | **SCENES** |
 | 8 | GET | `/scenes` | ✓ | Danh sách kịch bản (filter, paginate) | ✅ Done |
 | 9 | GET | `/scenes/search` | ✓ | Tìm kiếm kịch bản theo từ khóa | ✅ Done |
-| 10 | GET | `/scenes/recommend` | ✓ | Gợi ý kịch bản theo điểm yếu | ⏳ Todo |
+| 10 | GET | `/scenes/recommend` | ✓ | Gợi ý kịch bản theo điểm yếu | ✅ Done |
 | 11 | GET | `/scenes/:id` | ✓ | Chi tiết kịch bản đầy đủ | ✅ Done |
 | **SESSIONS** |
 | 12 | POST | `/sessions/level-test` | ✓ | Bài kiểm tra trình độ AI (5 lượt) | ✅ Done |
-| 13 | POST | `/sessions/start` | ✓ | Bắt đầu phiên học mới | ⏳ Todo |
+| 13 | POST | `/sessions/start` | ✓ | Bắt đầu phiên học mới | ✅ Done |
 | 14 | POST | `/sessions/:id/message` | ✓ | Gửi tin nhắn & Nhận feedback AI | ⏳ Todo |
 | 15 | POST | `/sessions/:id/hint` | ✓ | Dùng hint (tối đa 3 hint/phiên) | ⏳ Todo |
-| 16 | GET | `/sessions/:id/result` | ✓ | Lấy kết quả & Transcript chi tiết | ⏳ Todo |
-| 17 | PATCH | `/sessions/:id/abandon` | ✓ | Thoát phiên giữa chừng | ⏳ Todo |
+| 16 | GET | `/sessions/:id/result` | ✓ | Lấy kết quả & Transcript chi tiết | ✅ Done |
+| 17 | PATCH | `/sessions/:id/abandon` | ✓ | Thoát phiên giữa chừng | ✅ Done |
 | **USERS** |
 | 18 | GET | `/users/me` | ✓ | Lấy thông tin Profile cá nhân | ✅ Done |
 | 18a | PATCH | `/users/me/onboarding` | ✓ | Lưu kết quả onboarding survey | ✅ Done |
 | 19 | PATCH | `/users/me` | ✓ | Cập nhật displayName, avatarUrl | ✅ Done |
-| 20 | POST | `/users/xp` | ✓ | Cộng XP + cập nhật streak + missions | ⏳ Todo |
+| 20 | POST | `/users/xp` | ✓ | Cộng XP + cập nhật streak + missions | ✅ Done |
 | 21 | GET | `/users/progress` | ✓ | Thống kê học tập (XP/Skill chart) | ✅ Done |
 | 22 | GET | `/users/badges` | ✓ | Danh sách Achievements/Badges | ✅ Done |
 | **MISSIONS** |
 | 23 | GET | `/missions/today` | ✓ | Danh sách nhiệm vụ hằng ngày | ✅ Done |
 | **VOCABULARY** |
-| 24 | GET | `/vocabulary` | ✓ | Danh sách từ vựng đã lưu | ⏳ Todo |
-| 25 | POST | `/vocabulary` | ✓ | Thêm từ vựng mới (Auto/Manual) | ⏳ Todo |
-| 26 | DELETE | `/vocabulary/:id` | ✓ | Xóa từ khỏi danh sách học | ⏳ Todo |
+| 24 | GET | `/vocabulary` | ✓ | Danh sách từ vựng đã lưu | ✅ Done |
+| 25 | POST | `/vocabulary` | ✓ | Thêm từ vựng mới (Auto/Manual) | ✅ Done |
+| 26 | DELETE | `/vocabulary/:id` | ✓ | Xóa từ khỏi danh sách học | ✅ Done |
 
 ---
 
@@ -202,6 +202,40 @@ Tìm scene theo từ khóa cho user hiện tại. Bản hiện tại dùng text 
 }
 ```
 
+### 10. GET `/scenes/recommend`
+Gợi ý scene cho bước học tiếp theo dựa trên heuristic DB-only. Bản hiện tại chưa dùng Chroma/vector search nhưng đã giữ sẵn route và response shape ổn định cho frontend.
+
+**Query**
+- `limit`: số kết quả tối đa, mặc định `5`, tối đa `20`
+
+**Logic hiện tại**
+- Lấy 5 completed sessions gần nhất của user.
+- Suy ra skill yếu nhất từ `grammar`, `vocabulary`, `naturalness`.
+- Fallback sang `selfAssessment` nếu user chưa có completed session.
+- Rank scene theo `learningGoal`, category ưu tiên theo weak skill, độ gần level và vocabulary count.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "scenes": [
+      {
+        "id": "uuid",
+        "title": "At the Restaurant",
+        "category": "DAILY",
+        "description": "Order food and drinks, ask for a recommendation, and request the bill politely.",
+        "difficulty": "A2",
+        "estimatedMinutes": 6,
+        "characterName": "Jake",
+        "characterRole": "Waiter"
+      }
+    ]
+  }
+}
+```
+
 ### 11. GET `/scenes/:id`
 Lấy chi tiết đầy đủ của một scene active để hiển thị màn hình scene detail.
 
@@ -266,6 +300,110 @@ Xử lý từng lượt của bài test trình độ (Chat 5 lượt).
 }
 ```
 
+### 13. POST `/sessions/start`
+Tạo một session `ACTIVE` mới và trả opening message đầu tiên để frontend mở màn chat ngay, chưa cần gọi LLM roleplay.
+
+**Request body**
+```json
+{
+  "sceneId": "uuid"
+}
+```
+
+**Quy tắc hiện tại**
+- Chỉ cho phép một session `ACTIVE` tại một thời điểm cho mỗi user.
+- Opening message hiện là template deterministic theo `scene.category`, `characterName` và `characterRole`.
+- Message mở đầu được lưu luôn vào bảng `messages` với `turnIndex = 0`.
+
+**Response 201**
+```json
+{
+  "success": true,
+  "status": 201,
+  "data": {
+    "sessionId": "uuid",
+    "openingMessage": "Hi, I'm Mia, the Barista. Hi there. What would you like to do today?"
+  }
+}
+```
+
+### 16. GET `/sessions/:id/result`
+Lấy kết quả của một session đã kết thúc. Endpoint này chưa phụ thuộc LLM, chỉ đọc transcript và score đã có trong DB.
+
+**Quy tắc hiện tại**
+- Chỉ owner của session mới đọc được kết quả.
+- Nếu session còn `ACTIVE` thì trả `SESSION_NOT_FINISHED`.
+- Session `COMPLETED` và `ABANDONED` đều đọc được.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "session": {
+      "id": "uuid",
+      "status": "COMPLETED",
+      "xpEarned": 60,
+      "hintCount": 1,
+      "startedAt": "2026-04-02T10:00:00.000Z",
+      "endedAt": "2026-04-02T10:28:00.000Z",
+      "scene": {
+        "id": "uuid",
+        "title": "Airport Check-in",
+        "category": "TRAVEL",
+        "difficulty": "A2",
+        "description": "Check in luggage and ask about gate, boarding time, and seat.",
+        "characterName": "David",
+        "characterRole": "Check-in Staff"
+      }
+    },
+    "messages": [
+      {
+        "id": "uuid",
+        "role": "AI",
+        "content": "Hello, how can I help you with your flight today?",
+        "turnIndex": 0,
+        "hasError": null,
+        "errorType": null,
+        "originalPhrase": null,
+        "suggestion": null,
+        "explanation": null,
+        "isGood": null,
+        "isHint": false,
+        "createdAt": "2026-04-02T10:00:00.000Z"
+      }
+    ],
+    "scores": {
+      "grammar": 85,
+      "vocabulary": 78,
+      "naturalness": 82
+    }
+  }
+}
+```
+
+### 17. PATCH `/sessions/:id/abandon`
+Cho phép user thoát một session `ACTIVE` giữa chừng.
+
+**Quy tắc hiện tại**
+- Nếu session đang `ACTIVE`, backend cập nhật sang `ABANDONED` và set `endedAt`.
+- Nếu session đã `ABANDONED`, endpoint xử lý idempotent và vẫn trả thành công.
+- Nếu session đã `COMPLETED`, backend trả `SESSION_ALREADY_COMPLETED`.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "updated": true,
+    "status": "ABANDONED",
+    "endedAt": "2026-04-03T18:08:00.000Z"
+  }
+}
+```
+
 ### 18a. PATCH `/users/me/onboarding`
 Lưu hoặc skip onboarding survey. Endpoint này luôn đánh dấu onboarding đã hoàn thành để tránh loop onboarding khi user chọn skip toàn bộ câu hỏi.
 
@@ -275,6 +413,17 @@ Lưu hoặc skip onboarding survey. Endpoint này luôn đánh dấu onboarding 
   "learningGoal": "WORK",
   "studyFrequency": "REGULAR",
   "selfAssessment": "GRAMMAR"
+}
+```
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "updated": true
+  }
 }
 ```
 
@@ -335,35 +484,46 @@ Cập nhật các trường profile cơ bản của user hiện tại.
 }
 ```
 
+### 20. POST `/users/xp`
+Cộng XP cho một session `COMPLETED`, đồng thời cập nhật streak, mission progress và badge reward nếu đủ điều kiện.
+
+**Request body**
+```json
+{
+  "sessionId": "uuid"
+}
+```
+
+**Quy tắc hiện tại**
+- Chỉ chấp nhận session `COMPLETED`.
+- Dùng `Session.xpGrantedAt` để chống cộng XP lặp.
+- Tự đảm bảo user có mission của ngày hiện tại trước khi grant XP.
+- Có side effect lên `users.totalXp`, `users.streakDays`, `user_missions`, `user_badges`.
+
 **Response 200**
 ```json
 {
   "success": true,
   "status": 200,
   "data": {
-    "updated": true
+    "totalXp": 110,
+    "streakDays": 1,
+    "missionsCompleted": [
+      {
+        "id": "uuid",
+        "missionId": "uuid",
+        "title": "Complete 1 scene today",
+        "description": "Finish one learning scene.",
+        "missionType": "COMPLETE_SCENE",
+        "target": 1,
+        "current": 1,
+        "xp": 50,
+        "completedAt": "2026-04-04T14:13:00.000Z"
+      }
+    ]
   }
 }
 ```
-
----
-
-### 14. POST `/sessions/:id/message`
-Hệ thống gọi đồng thời 2 LLM: AI Character Chat + Evaluator Feedback.
-
-**Feedback Object:**
-- `hasError`: boolean
-- `correction`: Chuỗi sửa lại đúng ngữ pháp.
-- `explanation`: Tại sao lại sai và dùng từ nào hay hơn.
-- `annotationColor`: `amber` (có lỗi), `green` (rất tốt), `null` (bình thường).
-
----
-
-### 16. GET `/sessions/:id/result`
-Lấy báo cáo tổng kết & Transcript annotated.
-
-**Scores:** `{ "grammar": 88, "vocabulary": 75, "naturalness": 82 }`
-**Annotation Colors:** Dùng để Front-end hightlight nội dung câu của User.
 
 ---
 
@@ -481,6 +641,116 @@ Lấy daily missions của user trong ngày hiện tại. Nếu user chưa có m
 }
 ```
 
+### 24. GET `/vocabulary`
+Lấy danh sách từ vựng đã lưu của user hiện tại.
+
+**Query**
+- `page`: số trang, mặc định `1`
+- `limit`: số item mỗi trang, mặc định `10`, tối đa `50`
+- `isMastered`: `true | false` (optional)
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "vocabulary": [
+      {
+        "id": "uuid",
+        "word": "boarding pass",
+        "definition": "the document that allows you to get on a plane",
+        "example": "May I see your boarding pass, please?",
+        "isMastered": false,
+        "savedAt": "2026-04-02T10:25:00.000Z",
+        "reviewedAt": null,
+        "sourceSessionId": "uuid",
+        "scene": {
+          "id": "uuid",
+          "title": "Airport Check-in",
+          "category": "TRAVEL",
+          "difficulty": "A2"
+        }
+      },
+      {
+        "id": "uuid",
+        "word": "queue number",
+        "definition": "a number that shows your turn while waiting in line",
+        "example": null,
+        "isMastered": false,
+        "savedAt": "2026-04-02T10:26:00.000Z",
+        "reviewedAt": null,
+        "sourceSessionId": "uuid",
+        "scene": null
+      }
+    ],
+    "total": 2,
+    "page": 1,
+    "limit": 10
+  }
+}
+```
+
+### 25. POST `/vocabulary`
+Lưu một từ mới vào danh sách học. Endpoint này hỗ trợ cả auto-save từ `sceneVocabularyId` và manual-save qua cặp `word/definition`.
+
+**Request body - Auto save**
+```json
+{
+  "sceneVocabularyId": "uuid",
+  "sourceSessionId": "uuid"
+}
+```
+
+**Request body - Manual save**
+```json
+{
+  "word": "queue number",
+  "definition": "a number that shows your turn while waiting in line",
+  "sourceSessionId": "uuid"
+}
+```
+
+**Quy tắc hiện tại**
+- Không cho lưu trùng theo `sceneVocabularyId` hoặc theo `word`.
+- Nếu có `sourceSessionId`, backend sẽ kiểm tra session đó thuộc user hiện tại.
+- Có side effect lên mission `SAVE_VOCABULARY`, badge `VOCAB_SAVED`, và `users.totalXp` nếu vừa hoàn thành mission/badge.
+
+**Response 201**
+```json
+{
+  "success": true,
+  "status": 201,
+  "data": {
+    "vocabulary": {
+      "id": "uuid",
+      "word": "queue number",
+      "definition": "a number that shows your turn while waiting in line",
+      "example": null,
+      "isMastered": false,
+      "savedAt": "2026-04-04T15:00:00.000Z",
+      "reviewedAt": null,
+      "sourceSessionId": "uuid",
+      "scene": null
+    }
+  }
+}
+```
+
+### 26. DELETE `/vocabulary/:id`
+Xóa một từ khỏi danh sách học của user hiện tại.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "deleted": true
+  }
+}
+```
+
 ---
 
 ## 4. Bảng mã lỗi (Standardized Error Codes)
@@ -488,6 +758,10 @@ Lấy daily missions của user trong ngày hiện tại. Nếu user chưa có m
 - `INVALID_CREDENTIALS` (401): Sai email hoặc mật khẩu.
 - `UNAUTHORIZED` (401): Access Token hết hạn/sai.
 - `FORBIDDEN` (403): Không có quyền truy cập (vd: Admin API).
+- `NOT_FOUND` (404): Resource không tồn tại hoặc không thuộc quyền user hiện tại.
 - `SCENE_NOT_FOUND` (404): ID kịch bản không hợp lệ.
-- `SESSION_ALREADY_ACTIVE` (409): Người dùng đang có session chưa hoàn thành cho scene này.
+- `SESSION_ALREADY_ACTIVE` (409): Người dùng đang có session `ACTIVE` khác chưa hoàn thành.
+- `SESSION_NOT_FINISHED` (409): Chưa thể lấy result khi session vẫn còn `ACTIVE`.
+- `SESSION_ALREADY_COMPLETED` (409): Không thể abandon một session đã `COMPLETED`.
+- `SESSION_NOT_COMPLETED` (409): Chỉ có thể grant XP cho session đã `COMPLETED`.
 - `AI_ENGINE_ERROR` (502): LLM Server gặp sự cố.
