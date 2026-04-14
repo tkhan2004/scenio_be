@@ -1,7 +1,12 @@
 import { NextFunction, Request, Response } from 'express';
 import { fail, ok } from '../../utils/response';
+import {
+  GetSceneParams,
+  ListScenesQuery,
+  RecommendScenesQuery,
+  SearchScenesQuery,
+} from '../../schemas/scenes';
 import * as scenesService from './scenes.service';
-import { GetSceneParams, ListScenesQuery, SearchScenesQuery } from '../../schemas/scenes';
 
 /**
  * HTTP Handler - listScenes
@@ -34,6 +39,27 @@ export const searchScenes = async (req: Request, res: Response, next: NextFuncti
 
     const query = (req as any).validatedQuery as SearchScenesQuery;
     const result = await scenesService.searchScenes(userId, query);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - recommendScenes
+ * Summary: Gợi ý scene phù hợp nhất với skill yếu hiện tại của user.
+ * Inputs: req, res, next.
+ * Behavior: Lấy userId + validatedQuery -> gọi service -> trả response chuẩn.
+ */
+export const recommendScenes = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user?.id as string | undefined;
+    if (!userId) {
+      return fail(res, 'Thiếu thông tin người dùng', 'UNAUTHORIZED', 401);
+    }
+
+    const query = (req as any).validatedQuery as RecommendScenesQuery;
+    const result = await scenesService.recommendScenes(userId, query);
     ok(res, result);
   } catch (error) {
     next(error);

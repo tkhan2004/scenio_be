@@ -1,16 +1,34 @@
-import { Level, Prisma } from '@prisma/client';
+import { Level, Prisma, SceneCategory } from '@prisma/client';
 import * as scenesRepo from './scenes.repository';
-import { ListScenesQuery, SearchScenesQuery } from '../../schemas/scenes';
+import {
+  ListScenesQuery,
+  RecommendScenesQuery,
+  SearchScenesQuery,
+} from '../../schemas/scenes';
 
 type SceneCard = scenesRepo.SceneCardRecord;
 type SearchScene = scenesRepo.SearchSceneRecord;
 type SceneDetail = scenesRepo.SceneDetailRecord;
+type RecommendationCandidate = scenesRepo.RecommendationCandidateRecord;
+type WeakSkill = 'grammar' | 'vocabulary' | 'naturalness';
+
+const LEVEL_ORDER: Level[] = [Level.A1, Level.A2, Level.B1, Level.B2];
+const SKILL_KEYWORDS: Record<WeakSkill, string[]> = {
+  grammar: ['explain', 'compare', 'reason', 'question', 'confirm', 'describe'],
+  vocabulary: ['medicine', 'boarding', 'menu', 'networking', 'industry', 'reservation'],
+  naturalness: ['friend', 'weekend', 'chat', 'small talk', 'naturally', 'politely'],
+};
+const SKILL_CATEGORY_PRIORITY: Record<WeakSkill, SceneCategory[]> = {
+  grammar: [SceneCategory.WORK, SceneCategory.TRAVEL],
+  vocabulary: [SceneCategory.DAILY, SceneCategory.TRAVEL],
+  naturalness: [SceneCategory.SOCIAL, SceneCategory.DAILY],
+};
 
 /**
  * Helper - mapSceneCard
  * Summary: Chuẩn hóa record từ repository thành scene card trả cho client.
  */
-function mapSceneCard(scene: SceneCard | SearchScene) {
+function mapSceneCard(scene: SceneCard | SearchScene | RecommendationCandidate) {
   return {
     id: scene.id,
     title: scene.title,
@@ -50,18 +68,17 @@ function mapSceneDetail(scene: SceneDetail) {
 
 /**
  * Helper - getAllowedLevels
- * Summary: Giới hạn phạm vi level mà user được phép thấy khi search.
+ * Summary: Giới hạn phạm vi level mà user được phép thấy khi search/recommend.
  * Notes: User level cao hơn có thể thấy các scene level thấp hơn.
  */
 function getAllowedLevels(userLevel: Level) {
-  const order: Level[] = [Level.A1, Level.A2, Level.B1, Level.B2];
-  const index = order.indexOf(userLevel);
-  return index >= 0 ? order.slice(0, index + 1) : order;
+  const index = LEVEL_ORDER.indexOf(userLevel);
+  return index >= 0 ? LEVEL_ORDER.slice(0, index + 1) : LEVEL_ORDER;
 }
 
 /**
  * Helper - normalize
- * Summary: Chuẩn hóa text để tính điểm tìm kiếm text-based.
+ * Summary: Chuẩn hóa text để tính điểm search/recommend nội bộ.
  */
 function normalize(text: string) {
   return text.toLowerCase().trim();
@@ -102,6 +119,133 @@ function scoreScene(scene: SearchScene, rawQuery: string) {
     if (description.includes(term)) score += 8;
     if (characterName.includes(term) || characterRole.includes(term)) score += 6;
     if (vocabularyText.includes(term)) score += 5;
+  }
+
+  return score;
+}
+
+/**
+ * Helper - mapGoalToCategories
+ * Summary: Map learningGoal sang nhóm category nên ưu tiên khi recommend.
+ */
+function mapGoalToCategories(goal: string | null) {
+  switch (goal) {
+    case 'WORK':
+      return [SceneCategory.WORK, SceneCategory.SOCIAL];
+    case 'TRAVEL':
+      return [SceneCategory.TRAVEL, SceneCategory.DAILY];
+    case 'DAILY':
+      return [SceneCategory.DAILY, SceneCategory.SOCIAL];
+    default:
+      return null;
+  }
+}
+
+/**
+ * Helper - mapSelfAssessmentToWeakSkill
+ * Summary: Fallback suy ra skill yếu từ selfAssessment khi user chưa có completed sessions.
+ */
+function mapSelfAssessmentToWeakSkill(selfAssessment: string | null): WeakSkill {
+  switch (selfAssessment) {
+    case 'GRAMMAR':
+      return 'grammar';
+    case 'VOCABULARY':
+      return 'vocabulary';
+    case 'CONFIDENCE':
+    case 'NATURALNESS':
+    default:
+      return 'naturalness';
+  }
+}
+
+/**
+ * Helper - getWeakestSkill
+ * Summary: Tính skill yếu nhất từ 5 completed sessions gần nhất hoặc selfAssessment fallback.
+ */
+function getWeakestSkill(
+  sessions: Awaited<ReturnType<typeof scenesRepo.findRecentCompletedSessionsForRecommendation>>,
+  selfAssessment: string | null,
+): WeakSkill {
+  if (sessions.length === 0) {
+    return mapSelfAssessmentToWeakSkill(selfAssessment);
+  }
+
+  const averages = {
+    grammar: 0,
+    vocabulary: 0,
+    naturalness: 0,
+  };
+
+  let grammarCount = 0;
+  let vocabularyCount = 0;
+  let naturalnessCount = 0;
+
+  for (const session of sessions) {
+    if (typeof session.grammarScore === 'number') {
+      averages.grammar += session.grammarScore;
+      grammarCount += 1;
+    }
+    if (typeof session.vocabularyScore === 'number') {
+      averages.vocabulary += session.vocabularyScore;
+      vocabularyCount += 1;
+    }
+    if (typeof session.naturalnessScore === 'number') {
+      averages.naturalness += session.naturalnessScore;
+      naturalnessCount += 1;
+    }
+  }
+
+  const normalized = {
+    grammar: grammarCount > 0 ? averages.grammar / grammarCount : Number.MAX_SAFE_INTEGER,
+    vocabulary: vocabularyCount > 0 ? averages.vocabulary / vocabularyCount : Number.MAX_SAFE_INTEGER,
+    naturalness: naturalnessCount > 0 ? averages.naturalness / naturalnessCount : Number.MAX_SAFE_INTEGER,
+  };
+
+  return (Object.entries(normalized) as Array<[WeakSkill, number]>)
+    .sort((a, b) => a[1] - b[1])[0][0];
+}
+
+/**
+ * Helper - scoreRecommendationScene
+ * Summary: Chấm điểm heuristic cho scene candidate theo skill yếu, level, và learningGoal.
+ * Notes: Đây là bản DB-only để mở endpoint trước khi vector recommend hoàn thiện.
+ */
+function scoreRecommendationScene(
+  scene: RecommendationCandidate,
+  userLevel: Level,
+  weakestSkill: WeakSkill,
+  goalCategories: SceneCategory[] | null,
+) {
+  const text = normalize(
+    [scene.title, scene.description, scene.missionText, scene.characterName, scene.characterRole].join(' '),
+  );
+  const levelDistance = Math.abs(LEVEL_ORDER.indexOf(userLevel) - LEVEL_ORDER.indexOf(scene.difficulty));
+
+  let score = 0;
+
+  if (goalCategories) {
+    const goalIndex = goalCategories.indexOf(scene.category);
+    if (goalIndex >= 0) {
+      score += goalIndex === 0 ? 45 : 28;
+    }
+  }
+
+  const skillCategoryIndex = SKILL_CATEGORY_PRIORITY[weakestSkill].indexOf(scene.category);
+  if (skillCategoryIndex >= 0) {
+    score += skillCategoryIndex === 0 ? 36 : 22;
+  }
+
+  score += Math.max(0, 24 - levelDistance * 8);
+  score += Math.min(scene._count.vocabulary, 8) * (weakestSkill === 'vocabulary' ? 4 : 2);
+
+  for (const keyword of SKILL_KEYWORDS[weakestSkill]) {
+    if (text.includes(keyword)) {
+      score += 12;
+    }
+  }
+
+  if (scene.difficulty === userLevel) {
+    score += 12;
   }
 
   return score;
@@ -167,6 +311,51 @@ export async function searchScenes(userId: string, query: SearchScenesQuery) {
       scene,
     }))
     .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.scene.title.localeCompare(b.scene.title))
+    .slice(0, query.limit)
+    .map((item) => mapSceneCard(item.scene));
+
+  return { scenes };
+}
+
+/**
+ * Function Objective - recommendScenes
+ * Summary: Gợi ý scene theo skill yếu nhất hiện tại của user.
+ * Inputs: userId từ access token và query limit đã validate.
+ * Behavior: Suy ra weakest skill từ completed sessions gần nhất -> rank candidate scenes bằng heuristic DB-only.
+ * Returns: Danh sách scene card phù hợp nhất cho bước học tiếp theo.
+ */
+export async function recommendScenes(userId: string, query: RecommendScenesQuery) {
+  const user = await scenesRepo.findRecommendationUserContext(userId);
+  if (!user) {
+    throw Object.assign(new Error('User không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+  }
+
+  const allowedLevels = getAllowedLevels(user.level);
+  const recentSessions = await scenesRepo.findRecentCompletedSessionsForRecommendation(userId, 5);
+  const weakestSkill = getWeakestSkill(recentSessions, user.selfAssessment);
+  const goalCategories = mapGoalToCategories(user.learningGoal);
+  const recentSceneIds = recentSessions.map((session) => session.sceneId);
+
+  const primaryCandidates = await scenesRepo.findRecommendationSceneCandidates(
+    allowedLevels,
+    Math.max(query.limit * 3, 12),
+    recentSceneIds,
+  );
+
+  const fallbackCandidates = primaryCandidates.length >= query.limit
+    ? []
+    : await scenesRepo.findRecommendationSceneCandidates(
+        allowedLevels,
+        Math.max(query.limit * 5, 16),
+      );
+
+  const scenes = [...primaryCandidates, ...fallbackCandidates]
+    .filter((scene, index, items) => items.findIndex((item) => item.id === scene.id) === index)
+    .map((scene) => ({
+      score: scoreRecommendationScene(scene, user.level, weakestSkill, goalCategories),
+      scene,
+    }))
     .sort((a, b) => b.score - a.score || a.scene.title.localeCompare(b.scene.title))
     .slice(0, query.limit)
     .map((item) => mapSceneCard(item.scene));
