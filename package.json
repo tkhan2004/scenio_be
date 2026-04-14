@@ -14,6 +14,7 @@
     "db:seed": "ts-node prisma/seed.ts",
     "db:reset": "prisma migrate reset --force",
     "generate": "prisma generate",
+    "test:elevenlabs": "ts-node scripts/test-elevenlabs.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
