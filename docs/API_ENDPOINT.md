@@ -61,6 +61,8 @@
 | 24 | GET | `/vocabulary` | ✓ | Danh sách từ vựng đã lưu | ✅ Done |
 | 25 | POST | `/vocabulary` | ✓ | Thêm từ vựng mới (Auto/Manual) | ✅ Done |
 | 26 | DELETE | `/vocabulary/:id` | ✓ | Xóa từ khỏi danh sách học | ✅ Done |
+| **ADMIN** |
+| 27 | GET | `/admin/users` | ✓ | Danh sách learner cho admin dashboard | ✅ Done |
 
 ---
 
@@ -637,6 +639,77 @@ Lấy daily missions của user trong ngày hiện tại. Nếu user chưa có m
         "date": "2026-04-06"
       }
     ]
+  }
+}
+```
+
+### 27. GET `/admin/users`
+Lấy danh sách learner cho admin dashboard. Endpoint này chỉ cho phép user có `isAdmin = true`.
+
+**Query params**
+```json
+{
+  "search": "learner",
+  "page": 1,
+  "limit": 10
+}
+```
+
+**Quy tắc hiện tại**
+- Chỉ trả về user `isAdmin = false`.
+- Hỗ trợ search theo `email` hoặc `displayName`.
+- Trả về dữ liệu an toàn cho client, không gồm password, googleId hay refresh token.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "summary": {
+      "totalUsers": 12,
+      "returnedUsers": 10,
+      "search": "learner"
+    },
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 12,
+      "totalPages": 2,
+      "hasNext": true,
+      "hasPrevious": false
+    },
+    "users": [
+      {
+        "id": "uuid",
+        "email": "learner@scenio.dev",
+        "displayName": "Scenio Learner",
+        "avatarUrl": null,
+        "level": "A2",
+        "learningGoal": "TRAVEL",
+        "studyFrequency": "REGULAR",
+        "selfAssessment": "GRAMMAR",
+        "needsLevelTest": false,
+        "totalXp": 320,
+        "streakDays": 7,
+        "lastActiveDate": "2026-04-04T00:00:00.000Z",
+        "createdAt": "2026-04-01T10:00:00.000Z",
+        "updatedAt": "2026-04-04T12:00:00.000Z",
+        "sessionsCount": 3
+      }
+    ]
+  }
+}
+```
+
+**Response 403**
+```json
+{
+  "success": false,
+  "status": 403,
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "Bạn không có quyền truy cập tài nguyên này"
   }
 }
 ```

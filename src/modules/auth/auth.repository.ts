@@ -32,7 +32,6 @@ export async function updateUserById(id: string, data: Prisma.UserUpdateInput) {
 }
 
 // --- RefreshToken Operations ---
-
 export async function createRefreshToken(data: { token: string; userId: string; expiresAt: Date }) {
   return await prisma.refreshToken.create({ data });
 }
