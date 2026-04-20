@@ -37,9 +37,11 @@ model User {
   updatedAt             DateTime  @updatedAt
 
   sessions       Session[]
+  customPracticeConfigs CustomPracticeConfig[]
   userMissions   UserMission[]
   userBadges     UserBadge[]
   userVocabulary UserVocabulary[]
+  vocabularyOccurrences UserVocabularyOccurrence[]
   refreshTokens  RefreshToken[]
 
   @@map("users")
@@ -78,6 +80,7 @@ model Scene {
 
   vocabulary SceneVocabulary[]
   sessions   Session[]
+  voicePreset SceneVoicePreset?
 
   @@map("scenes")
 }
@@ -98,13 +101,69 @@ model SceneVocabulary {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// VOICES
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VoiceProfile {
+  id               String        @id @default(uuid())
+  displayName      String
+  description      String?
+  gender           VoiceGender   @default(NEUTRAL)
+  locale           String?
+  accent           String?
+  provider         VoiceProvider @default(ELEVENLABS)
+  providerVoiceId  String?
+  realtimeProvider VoiceProvider @default(OPENAI)
+  realtimeVoiceId  String?
+  styleTags        String[]      @default([])
+  sampleText       String?
+  sampleUrl        String?
+  latencyTier      String?
+  isActive         Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  defaultScenePresets       SceneVoicePreset[] @relation("DefaultVoicePreset")
+  defaultMaleScenePresets   SceneVoicePreset[] @relation("MaleVoicePreset")
+  defaultFemaleScenePresets SceneVoicePreset[] @relation("FemaleVoicePreset")
+  sessions                  Session[]
+  customPracticeConfigs     CustomPracticeConfig[]
+
+  @@map("voice_profiles")
+}
+
+model SceneVoicePreset {
+  id                   String  @id @default(uuid())
+  sceneId              String  @unique
+  defaultVoiceId       String?
+  defaultMaleVoiceId   String?
+  defaultFemaleVoiceId String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  scene              Scene         @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  defaultVoice       VoiceProfile? @relation("DefaultVoicePreset", fields: [defaultVoiceId], references: [id], onDelete: SetNull)
+  defaultMaleVoice   VoiceProfile? @relation("MaleVoicePreset", fields: [defaultMaleVoiceId], references: [id], onDelete: SetNull)
+  defaultFemaleVoice VoiceProfile? @relation("FemaleVoicePreset", fields: [defaultFemaleVoiceId], references: [id], onDelete: SetNull)
+
+  @@map("scene_voice_presets")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SESSIONS & MESSAGES
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Session {
   id               String        @id @default(uuid())
   userId           String
-  sceneId          String
+  sceneId          String?
+  customPracticeConfigId String?
+  sourceType       SessionSourceType @default(CURATED_SCENE)
+  voiceProfileId   String?
+  voiceProvider    VoiceProvider?
+  voiceSnapshotName String?
+  providerSessionId String?
+  modality         SessionModality @default(TEXT)
   status           SessionStatus @default(ACTIVE)
   grammarScore     Float?
   vocabularyScore  Float?
@@ -116,13 +175,70 @@ model Session {
   endedAt          DateTime?
 
   user     User      @relation(fields: [userId], references: [id])
-  scene    Scene     @relation(fields: [sceneId], references: [id])
+  scene    Scene?    @relation(fields: [sceneId], references: [id])
+  customPracticeConfig CustomPracticeConfig? @relation(fields: [customPracticeConfigId], references: [id], onDelete: SetNull)
+  voiceProfile VoiceProfile? @relation(fields: [voiceProfileId], references: [id], onDelete: SetNull)
   messages Message[]
+  vocabularyOccurrences UserVocabularyOccurrence[]
 
   @@index([userId])
   @@index([sceneId])
+  @@index([customPracticeConfigId])
+  @@index([voiceProfileId])
   @@index([userId, status])
   @@map("sessions")
+}
+
+model CustomPracticeConfig {
+  id                    String     @id @default(uuid())
+  userId                String
+  practiceGoal          String
+  successOutcome        String?
+  topicSummary          String
+  contextType           String
+  location              String?
+  conversationChannel   String
+  timePressure          String?
+  specialConditions     String[]   @default([])
+  userRole              String
+  userIntent            String?
+  userEnglishLevel      Level?
+  userPersonaNotes      String?
+  aiRole                String
+  aiDisplayName         String
+  aiRelationshipToUser  String?
+  aiPrimaryGoal         String?
+  aiBehaviorStyle       String?
+  aiGenderPresentation  VoiceGender @default(NEUTRAL)
+  aiVoicePresetId       String?
+  aiVoiceTone           String?
+  aiSpeechSpeed         String?
+  aiAccentPreference    String?
+  difficulty            Level      @default(A2)
+  conversationLength    String?
+  correctionStyle       String?
+  hintFrequency         String?
+  responseComplexity    String?
+  focusSkills           String[]   @default([])
+  mustUseVocabulary     String[]   @default([])
+  avoidTopics           String[]   @default([])
+  customInstructions    String?
+  displayTitle          String
+  displaySubtitle       String
+  missionText           String
+  estimatedMinutes      Int        @default(10)
+  openingMessage        String     @db.Text
+  systemPrompt          String     @db.Text
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  aiVoicePreset VoiceProfile? @relation(fields: [aiVoicePresetId], references: [id], onDelete: SetNull)
+  sessions     Session[]
+
+  @@index([userId])
+  @@index([aiVoicePresetId])
+  @@map("custom_practice_configs")
 }
 
 model Message {
@@ -131,6 +247,11 @@ model Message {
   role      MessageRole
   content   String      @db.Text
   turnIndex Int
+  providerEventId String?
+  modality        MessageModality @default(TEXT)
+  audioStartMs    Int?
+  audioEndMs      Int?
+  isFinal         Boolean         @default(true)
 
   // Feedback — tách cột riêng thay vì JSON blob để dễ query & thống kê lỗi
   hasError       Boolean?
@@ -147,6 +268,7 @@ model Message {
 
   @@index([sessionId])
   @@index([sessionId, turnIndex])
+  @@index([providerEventId])
   @@map("messages")
 }
 
@@ -227,25 +349,52 @@ model UserVocabulary {
 
   userId String
 
-  // Một trong hai nguồn:
-  // 1. Từ lưu từ danh sách vocab của kịch bản → có sceneVocabularyId
-  // 2. Từ xuất hiện trong hội thoại, không có trong vocab list → chỉ có word/definition
-  sceneVocabularyId String? // nullable
-  word              String? // nullable — chỉ dùng khi không có sceneVocabularyId
-  definition        String? // nullable — chỉ dùng khi không có sceneVocabularyId
+  // Dictionary aggregate cho user.
+  // Một từ chỉ có một bản ghi tổng hợp trong "My Dictionary",
+  // còn mỗi lần gặp lại trong từng session sẽ lưu ở bảng occurrence riêng.
+  sceneVocabularyId String?
+  normalizedWord    String
+  word              String
+  definition        String
 
-  sourceSessionId String? // session nào sinh ra từ này (hiển thị context cho user)
+  sourceSessionId String? // session gần nhất mà user gặp/lưu từ này
+  encounterCount  Int       @default(1)
+  srsLevel        Int       @default(0)
+  nextReviewAt    DateTime?
   isMastered      Boolean   @default(false)
   savedAt         DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
   reviewedAt      DateTime?
 
   user            User             @relation(fields: [userId], references: [id])
   sceneVocabulary SceneVocabulary? @relation(fields: [sceneVocabularyId], references: [id])
+  occurrences     UserVocabularyOccurrence[]
 
-  @@unique([userId, sceneVocabularyId]) // tránh lưu trùng từ cùng 1 kịch bản
+  @@unique([userId, normalizedWord])
   @@index([userId])
   @@index([userId, isMastered])
+  @@index([userId, nextReviewAt])
   @@map("user_vocabulary")
+}
+
+model UserVocabularyOccurrence {
+  id               String   @id @default(uuid())
+  userVocabularyId String
+  userId           String
+  sessionId        String?
+  sampleSentence   String?
+  sourceMessageId  String?
+  createdAt        DateTime @default(now())
+
+  userVocabulary UserVocabulary @relation(fields: [userVocabularyId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session        Session?       @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@unique([userVocabularyId, sessionId])
+  @@index([userId, createdAt])
+  @@index([sessionId])
+  @@index([userVocabularyId])
+  @@map("user_vocabulary_occurrences")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -272,9 +421,35 @@ enum SessionStatus {
   ABANDONED
 }
 
+enum SessionModality {
+  TEXT
+  VOICE
+}
+
+enum SessionSourceType {
+  CURATED_SCENE
+  CUSTOM_PRACTICE
+}
+
 enum MessageRole {
   USER
   AI
+}
+
+enum MessageModality {
+  TEXT
+  AUDIO_TRANSCRIPT
+}
+
+enum VoiceProvider {
+  ELEVENLABS
+  OPENAI
+}
+
+enum VoiceGender {
+  MALE
+  FEMALE
+  NEUTRAL
 }
 
 enum ErrorType {

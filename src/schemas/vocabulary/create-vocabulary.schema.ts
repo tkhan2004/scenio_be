@@ -7,6 +7,8 @@ export const createVocabularySchema = z.object({
       word: z.string().trim().min(1, 'Từ vựng không được để trống').optional(),
       definition: z.string().trim().min(1, 'Định nghĩa không được để trống').optional(),
       sourceSessionId: z.string().uuid('sourceSessionId không hợp lệ').nullable().optional(),
+      sampleSentence: z.string().trim().min(1, 'Câu ví dụ không được để trống').max(500).optional(),
+      sourceMessageId: z.string().trim().min(1, 'sourceMessageId không hợp lệ').max(120).optional(),
     })
     .superRefine((data, ctx) => {
       const hasSceneVocabulary = Boolean(data.sceneVocabularyId);
