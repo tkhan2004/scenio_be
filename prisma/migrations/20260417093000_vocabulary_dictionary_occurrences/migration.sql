@@ -22,6 +22,14 @@ SET
   "lastSeenAt" = COALESCE("reviewedAt", "savedAt")
 WHERE "normalizedWord" IS NULL;
 
+-- Legacy cleanup:
+-- Some older local rows were created without sceneVocabularyId and without manual word/definition.
+-- These rows cannot be upgraded into dictionary entries, so remove them before NOT NULL constraints.
+DELETE FROM "user_vocabulary"
+WHERE COALESCE(NULLIF(btrim("word"), ''), NULL) IS NULL
+   OR COALESCE(NULLIF(btrim("definition"), ''), NULL) IS NULL
+   OR COALESCE(NULLIF(btrim("normalizedWord"), ''), NULL) IS NULL;
+
 ALTER TABLE "user_vocabulary"
   ALTER COLUMN "word" SET NOT NULL,
   ALTER COLUMN "definition" SET NOT NULL,
