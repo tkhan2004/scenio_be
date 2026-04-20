@@ -41,11 +41,14 @@
 | 9 | GET | `/scenes/search` | ✓ | Tìm kiếm kịch bản theo từ khóa | ✅ Done |
 | 10 | GET | `/scenes/recommend` | ✓ | Gợi ý kịch bản theo điểm yếu | ✅ Done |
 | 11 | GET | `/scenes/:id` | ✓ | Chi tiết kịch bản đầy đủ | ✅ Done |
+| 11a | GET | `/scenes/:id/voices` | ✓ | Quick-pick voices và advanced voice catalog cho scene | ✅ Done |
 | **SESSIONS** |
 | 12 | POST | `/sessions/level-test` | ✓ | Bài kiểm tra trình độ AI (5 lượt) | ✅ Done |
 | 13 | POST | `/sessions/start` | ✓ | Bắt đầu phiên học mới | ✅ Done |
-| 14 | POST | `/sessions/:id/message` | ✓ | Gửi tin nhắn & Nhận feedback AI | ⏳ Todo |
-| 15 | POST | `/sessions/:id/hint` | ✓ | Dùng hint (tối đa 3 hint/phiên) | ⏳ Todo |
+| 13b | POST | `/sessions/start-custom` | ✓ | Tạo custom practice session từ structured brief | ✅ Done |
+| 13a | POST | `/sessions/:id/realtime-token` | ✓ | Mint Realtime client secret cho session voice | ✅ Done |
+| 14 | POST | `/sessions/:id/message` | ✓ | Đồng bộ finalized transcript/text turn | ✅ Done |
+| 15 | POST | `/sessions/:id/hint` | ✓ | Dùng hint (tối đa 3 hint/phiên) | ✅ Done |
 | 16 | GET | `/sessions/:id/result` | ✓ | Lấy kết quả & Transcript chi tiết | ✅ Done |
 | 17 | PATCH | `/sessions/:id/abandon` | ✓ | Thoát phiên giữa chừng | ✅ Done |
 | **USERS** |
@@ -58,11 +61,18 @@
 | **MISSIONS** |
 | 23 | GET | `/missions/today` | ✓ | Danh sách nhiệm vụ hằng ngày | ✅ Done |
 | **VOCABULARY** |
-| 24 | GET | `/vocabulary` | ✓ | Danh sách từ vựng đã lưu | ✅ Done |
-| 25 | POST | `/vocabulary` | ✓ | Thêm từ vựng mới (Auto/Manual) | ✅ Done |
+| 24 | GET | `/vocabulary` | ✓ | Từ điển tổng hợp của user | ✅ Done |
+| 24a | GET | `/vocabulary/decks` | ✓ | Danh sách deck từ vựng theo session | ✅ Done |
+| 24b | GET | `/vocabulary/decks/:sessionId` | ✓ | Chi tiết words nằm trong một deck session | ✅ Done |
+| 25 | POST | `/vocabulary` | ✓ | Save từ vào dictionary + occurrence theo session | ✅ Done |
+| 25a | POST | `/vocabulary/:id/review` | ✓ | Submit kết quả review SRS cho một từ | ✅ Done |
 | 26 | DELETE | `/vocabulary/:id` | ✓ | Xóa từ khỏi danh sách học | ✅ Done |
+| **VOICES** |
+| 27 | GET | `/voices` | ✓ | Voice catalog active có filter và phân trang | ✅ Done |
+| 28 | GET | `/voices/:id` | ✓ | Chi tiết một voice profile active | ✅ Done |
+| 29 | POST | `/voices/preview` | ✓ | Sinh audio preview cho voice profile | ✅ Done |
 | **ADMIN** |
-| 27 | GET | `/admin/users` | ✓ | Danh sách learner cho admin dashboard | ✅ Done |
+| 30 | GET | `/admin/users` | ✓ | Danh sách learner cho admin dashboard | ✅ Done |
 
 ---
 
@@ -121,6 +131,7 @@ Tải toàn bộ dữ liệu trang chủ trong **1 request duy nhất** để tr
     ],
     "inProgressSession": {
       "id": "uuid",
+      "sourceType": "CURATED_SCENE",
       "sceneTitle": "At the Coffee Shop",
       "characterName": "Mia",
       "startedAt": "2025-03-31T08:00:00Z"
@@ -271,6 +282,65 @@ Lấy chi tiết đầy đủ của một scene active để hiển thị màn h
 }
 ```
 
+### 11a. GET `/scenes/:id/voices`
+Lấy quick-pick voices và advanced voice catalog cho scene detail / voice picker.
+
+**Quy tắc hiện tại**
+- Chỉ trả về scene `isActive = true`.
+- `quickPicks` trả về preset nhanh kiểu `default`, `male`, `female`.
+- `advancedVoices` trả về voice catalog active để user chọn nâng cao.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "scene": {
+      "id": "uuid",
+      "title": "Airport Check-in",
+      "category": "TRAVEL",
+      "characterName": "David",
+      "characterRole": "Check-in Staff"
+    },
+    "quickPicks": {
+      "default": {
+        "id": "uuid",
+        "displayName": "Ken - Polite Airport Staff",
+        "gender": "MALE",
+        "locale": "en-US",
+        "accent": "American"
+      },
+      "male": {
+        "id": "uuid",
+        "displayName": "Ken - Polite Airport Staff",
+        "gender": "MALE",
+        "locale": "en-US",
+        "accent": "American"
+      },
+      "female": {
+        "id": "uuid",
+        "displayName": "Anna - Warm Receptionist",
+        "gender": "FEMALE",
+        "locale": "en-US",
+        "accent": "American"
+      }
+    },
+    "advancedVoices": [
+      {
+        "id": "uuid",
+        "displayName": "Anna - Warm Receptionist",
+        "description": "Female voice for welcoming hospitality and front-desk scenes.",
+        "gender": "FEMALE",
+        "locale": "en-US",
+        "accent": "American",
+        "styleTags": ["warm", "helpful", "hospitality"]
+      }
+    ]
+  }
+}
+```
+
 ---
 
 ### 12. POST `/sessions/level-test`
@@ -308,12 +378,16 @@ Tạo một session `ACTIVE` mới và trả opening message đầu tiên để 
 **Request body**
 ```json
 {
-  "sceneId": "uuid"
+  "sceneId": "uuid",
+  "voiceProfileId": "uuid",
+  "modality": "VOICE"
 }
 ```
 
 **Quy tắc hiện tại**
 - Chỉ cho phép một session `ACTIVE` tại một thời điểm cho mỗi user.
+- `voiceProfileId` là optional; nếu không truyền, backend tự resolve theo scene preset.
+- `modality` hỗ trợ `TEXT` hoặc `VOICE`.
 - Opening message hiện là template deterministic theo `scene.category`, `characterName` và `characterRole`.
 - Message mở đầu được lưu luôn vào bảng `messages` với `turnIndex = 0`.
 
@@ -324,7 +398,245 @@ Tạo một session `ACTIVE` mới và trả opening message đầu tiên để 
   "status": 201,
   "data": {
     "sessionId": "uuid",
-    "openingMessage": "Hi, I'm Mia, the Barista. Hi there. What would you like to do today?"
+    "openingMessage": "Hi, I'm Mia, the Barista. Hi there. What would you like to do today?",
+    "modality": "VOICE",
+    "selectedVoice": {
+      "id": "uuid",
+      "displayName": "Mia - Cheerful Cafe Clerk",
+      "gender": "FEMALE",
+      "locale": "en-US",
+      "accent": "American",
+      "realtimeVoiceId": "verse"
+    }
+  }
+}
+```
+
+### 13b. POST `/sessions/start-custom`
+Tạo một session `ACTIVE` từ structured brief của user, không cần `sceneId`.
+
+**Request body**
+```json
+{
+  "practiceGoal": "Luyện phỏng vấn vị trí frontend intern",
+  "successOutcome": "Tự tin giới thiệu bản thân và trả lời về dự án cá nhân",
+  "topicSummary": "Buổi phỏng vấn online 15 phút với HR công ty công nghệ",
+  "context": {
+    "contextType": "INTERVIEW",
+    "location": "Online video call",
+    "conversationChannel": "VIDEO_CALL",
+    "timePressure": "MEDIUM",
+    "specialConditions": ["Professional setting", "Need concise answers"]
+  },
+  "userProfile": {
+    "userRole": "Frontend intern candidate",
+    "userIntent": "Show confidence and explain project experience clearly",
+    "userEnglishLevel": "B1",
+    "userPersonaNotes": "Hay bị run khi trả lời câu hỏi bất ngờ"
+  },
+  "aiPersona": {
+    "aiRole": "HR recruiter",
+    "aiDisplayName": "Emma",
+    "aiRelationshipToUser": "INTERVIEWER",
+    "aiPrimaryGoal": "Evaluate communication and role fit",
+    "aiBehaviorStyle": "Professional but friendly",
+    "aiGenderPresentation": "FEMALE",
+    "aiVoicePresetId": "uuid",
+    "aiVoiceTone": "CONFIDENT",
+    "aiSpeechSpeed": "NORMAL",
+    "aiAccentPreference": "US"
+  },
+  "learningConfig": {
+    "difficulty": "B1",
+    "conversationLength": "MEDIUM",
+    "correctionStyle": "END_ONLY",
+    "hintFrequency": "LOW",
+    "responseComplexity": "BALANCED",
+    "focusSkills": ["Self introduction", "Project explanation"],
+    "mustUseVocabulary": ["internship", "responsive design"],
+    "avoidTopics": [],
+    "customInstructions": "Hãy giữ vai HR xuyên suốt và hỏi tiếp nối tự nhiên."
+  },
+  "modality": "TEXT"
+}
+```
+
+**Quy tắc hiện tại**
+- Không cần `sceneId`.
+- Backend lưu `custom_practice_configs` rồi tạo session với `sourceType = CUSTOM_PRACTICE`.
+- Chỉ cho phép một session `ACTIVE` tại một thời điểm cho mỗi user.
+- Voice được resolve từ `aiVoicePresetId`; nếu không truyền, backend fallback theo `aiGenderPresentation`.
+- Opening message hiện là deterministic, không cần LLM để mở đầu.
+
+**Response 201**
+```json
+{
+  "success": true,
+  "status": 201,
+  "data": {
+    "sessionId": "uuid",
+    "sourceType": "CUSTOM_PRACTICE",
+    "openingMessage": "Hi, I'm Emma, the HR recruiter. Thanks for joining this call. Could you start by introducing yourself?",
+    "modality": "TEXT",
+    "customPractice": {
+      "id": "uuid",
+      "displayTitle": "Buổi phỏng vấn online 15 phút với HR công ty công nghệ",
+      "displaySubtitle": "You are speaking with Emma, a HR recruiter.",
+      "contextType": "INTERVIEW",
+      "difficulty": "B1",
+      "topicSummary": "Buổi phỏng vấn online 15 phút với HR công ty công nghệ",
+      "missionText": "Tự tin giới thiệu bản thân và trả lời về dự án cá nhân",
+      "estimatedMinutes": 12,
+      "aiPersona": {
+        "displayName": "Emma",
+        "role": "HR recruiter",
+        "behaviorStyle": "Professional but friendly",
+        "genderPresentation": "FEMALE",
+        "voiceTone": "CONFIDENT",
+        "accentPreference": "US"
+      }
+    },
+    "selectedVoice": {
+      "id": "uuid",
+      "displayName": "Emma HR Warm",
+      "gender": "FEMALE",
+      "locale": "en-US",
+      "accent": "American",
+      "realtimeVoiceId": "alloy"
+    }
+  }
+}
+```
+
+### 13a. POST `/sessions/:id/realtime-token`
+Mint Realtime client secret cho WebRTC client của session voice.
+
+**Quy tắc hiện tại**
+- Chỉ owner của session mới được gọi.
+- Session phải đang `ACTIVE`.
+- Session phải có voice profile hợp lệ với `realtimeVoiceId`.
+- Backend build instructions từ scene + level + mission + selected voice, rồi gọi OpenAI Realtime để mint client secret ngắn hạn.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "sessionId": "uuid",
+    "modality": "VOICE",
+    "realtimeProvider": "OPENAI",
+    "clientSecret": {
+      "value": "ek_xxx",
+      "expiresAt": 1756310470
+    },
+    "sessionConfig": {
+      "model": "gpt-realtime",
+      "voice": "verse",
+      "transcriptionModel": "gpt-4o-mini-transcribe",
+      "turnDetection": "server_vad",
+      "outputModalities": ["audio", "text"],
+      "instructions": "You are roleplaying as Mia..."
+    },
+    "selectedVoice": {
+      "id": "uuid",
+      "displayName": "Mia - Cheerful Cafe Clerk",
+      "gender": "FEMALE",
+      "locale": "en-US",
+      "accent": "American",
+      "realtimeVoiceId": "verse"
+    }
+  }
+}
+```
+
+### 14. POST `/sessions/:id/message`
+Đồng bộ finalized transcript hoặc text turn từ client về backend session.
+
+**Request body**
+```json
+{
+  "source": "USER_AUDIO",
+  "content": "Could you tell me where the gate is?",
+  "providerEventId": "event_123",
+  "isFinal": true,
+  "audioStartMs": 1200,
+  "audioEndMs": 3500,
+  "completeSession": {
+    "grammarScore": 86,
+    "vocabularyScore": 79,
+    "naturalnessScore": 82,
+    "xpEarned": 60
+  }
+}
+```
+
+**Quy tắc hiện tại**
+- `source` hỗ trợ `USER_TEXT`, `USER_AUDIO`, `AI_TEXT`, `AI_AUDIO`.
+- Nếu `isFinal = false`, backend bỏ qua để tránh lưu partial transcript.
+- `providerEventId` được dùng để xử lý idempotent khi client retry.
+- Nếu có `completeSession`, backend sẽ đánh dấu session là `COMPLETED` và set score/xp ngay trong cùng flow.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "stored": true,
+    "message": {
+      "id": "uuid",
+      "role": "USER",
+      "content": "Could you tell me where the gate is?",
+      "turnIndex": 3,
+      "providerEventId": "event_123",
+      "modality": "AUDIO_TRANSCRIPT",
+      "audioStartMs": 1200,
+      "audioEndMs": 3500,
+      "isFinal": true,
+      "isHint": false
+    },
+    "session": {
+      "id": "uuid",
+      "status": "COMPLETED",
+      "endedAt": "2026-04-15T08:40:00.000Z"
+    }
+  }
+}
+```
+
+### 15. POST `/sessions/:id/hint`
+Sinh một hint ngắn cho session `ACTIVE` hiện tại.
+
+**Request body**
+```json
+{
+  "focus": "conversation"
+}
+```
+
+**Quy tắc hiện tại**
+- Chỉ owner của session mới được gọi.
+- Chỉ session `ACTIVE` mới xin hint được.
+- Giới hạn tối đa 3 hint cho mỗi session.
+- Backend ưu tiên gọi provider text để sinh hint ngắn; nếu provider lỗi thì fallback bằng hint deterministic.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "message": {
+      "id": "uuid",
+      "role": "AI",
+      "content": "Ask one short follow-up question about the boarding gate.",
+      "turnIndex": 4,
+      "modality": "TEXT",
+      "isFinal": true,
+      "isHint": true
+    },
+    "hintCount": 2
   }
 }
 ```
@@ -345,13 +657,34 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
   "data": {
     "session": {
       "id": "uuid",
+      "sourceType": "CURATED_SCENE",
       "status": "COMPLETED",
+      "modality": "VOICE",
+      "providerSessionId": "sess_xxx",
+      "voiceSnapshotName": "Ken - Polite Airport Staff",
       "xpEarned": 60,
       "hintCount": 1,
       "startedAt": "2026-04-02T10:00:00.000Z",
       "endedAt": "2026-04-02T10:28:00.000Z",
+      "voiceProfile": {
+        "id": "uuid",
+        "displayName": "Ken - Polite Airport Staff",
+        "gender": "MALE",
+        "locale": "en-US",
+        "accent": "American",
+        "realtimeVoiceId": "cedar"
+      },
       "scene": {
         "id": "uuid",
+        "title": "Airport Check-in",
+        "category": "TRAVEL",
+        "difficulty": "A2",
+        "description": "Check in luggage and ask about gate, boarding time, and seat.",
+        "characterName": "David",
+        "characterRole": "Check-in Staff"
+      },
+      "customPractice": null,
+      "sourceSummary": {
         "title": "Airport Check-in",
         "category": "TRAVEL",
         "difficulty": "A2",
@@ -366,6 +699,11 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
         "role": "AI",
         "content": "Hello, how can I help you with your flight today?",
         "turnIndex": 0,
+        "providerEventId": null,
+        "modality": "TEXT",
+        "audioStartMs": null,
+        "audioEndMs": null,
+        "isFinal": true,
         "hasError": null,
         "errorType": null,
         "originalPhrase": null,
@@ -561,6 +899,7 @@ Thống kê phục vụ vẽ biểu đồ:
     "sessionsHistory": [
       {
         "id": "uuid",
+        "sourceType": "CURATED_SCENE",
         "sceneTitle": "Airport Check-in",
         "category": "TRAVEL",
         "difficulty": "A2",
@@ -643,7 +982,74 @@ Lấy daily missions của user trong ngày hiện tại. Nếu user chưa có m
 }
 ```
 
-### 27. GET `/admin/users`
+### 27. GET `/voices`
+Lấy voice catalog active có filter và phân trang.
+
+**Query params**
+```json
+{
+  "search": "warm",
+  "gender": "FEMALE",
+  "page": 1,
+  "limit": 10
+}
+```
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "summary": {
+      "totalVoices": 6,
+      "returnedVoices": 3,
+      "search": "warm",
+      "gender": "FEMALE"
+    },
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 3,
+      "totalPages": 1,
+      "hasNext": false,
+      "hasPrevious": false
+    },
+    "voices": [
+      {
+        "id": "uuid",
+        "displayName": "Anna - Warm Receptionist",
+        "description": "Female voice for welcoming hospitality and front-desk scenes.",
+        "gender": "FEMALE",
+        "locale": "en-US",
+        "accent": "American",
+        "styleTags": ["warm", "helpful", "hospitality"]
+      }
+    ]
+  }
+}
+```
+
+### 28. GET `/voices/:id`
+Lấy chi tiết một voice profile active.
+
+### 29. POST `/voices/preview`
+Sinh audio preview cho voice profile được chọn.
+
+**Request body**
+```json
+{
+  "voiceId": "uuid",
+  "text": "Hello, I am your voice partner for this scene."
+}
+```
+
+**Quy tắc hiện tại**
+- Ưu tiên synth preview bằng ElevenLabs nếu voice profile có `providerVoiceId`.
+- Nếu ElevenLabs không khả dụng, backend fallback sang OpenAI TTS bằng `realtimeVoiceId`.
+- Response là binary audio stream.
+
+### 30. GET `/admin/users`
 Lấy danh sách learner cho admin dashboard. Endpoint này chỉ cho phép user có `isAdmin = true`.
 
 **Query params**
@@ -715,7 +1121,7 @@ Lấy danh sách learner cho admin dashboard. Endpoint này chỉ cho phép user
 ```
 
 ### 24. GET `/vocabulary`
-Lấy danh sách từ vựng đã lưu của user hiện tại.
+Lấy **dictionary tổng hợp** của user hiện tại. Mỗi từ chỉ có một bản ghi duy nhất trong danh sách này, dù user có thể gặp lại cùng từ đó ở nhiều session khác nhau.
 
 **Query**
 - `page`: số trang, mặc định `1`
@@ -731,11 +1137,17 @@ Lấy danh sách từ vựng đã lưu của user hiện tại.
     "vocabulary": [
       {
         "id": "uuid",
+        "normalizedWord": "boarding pass",
         "word": "boarding pass",
         "definition": "the document that allows you to get on a plane",
         "example": "May I see your boarding pass, please?",
         "isMastered": false,
+        "needsReview": true,
+        "encounterCount": 2,
+        "srsLevel": 0,
+        "nextReviewAt": null,
         "savedAt": "2026-04-02T10:25:00.000Z",
+        "lastSeenAt": "2026-04-05T09:10:00.000Z",
         "reviewedAt": null,
         "sourceSessionId": "uuid",
         "scene": {
@@ -743,18 +1155,31 @@ Lấy danh sách từ vựng đã lưu của user hiện tại.
           "title": "Airport Check-in",
           "category": "TRAVEL",
           "difficulty": "A2"
+        },
+        "latestOccurrence": {
+          "id": "uuid",
+          "sessionId": "uuid",
+          "sampleSentence": "May I see your boarding pass, please?",
+          "createdAt": "2026-04-05T09:10:00.000Z"
         }
       },
       {
         "id": "uuid",
+        "normalizedWord": "queue number",
         "word": "queue number",
         "definition": "a number that shows your turn while waiting in line",
         "example": null,
         "isMastered": false,
+        "needsReview": true,
+        "encounterCount": 1,
+        "srsLevel": 0,
+        "nextReviewAt": null,
         "savedAt": "2026-04-02T10:26:00.000Z",
+        "lastSeenAt": "2026-04-02T10:26:00.000Z",
         "reviewedAt": null,
         "sourceSessionId": "uuid",
-        "scene": null
+        "scene": null,
+        "latestOccurrence": null
       }
     ],
     "total": 2,
@@ -764,14 +1189,96 @@ Lấy danh sách từ vựng đã lưu của user hiện tại.
 }
 ```
 
+### 24a. GET `/vocabulary/decks`
+Lấy danh sách deck từ vựng theo session context. Đây là view "Context-Based Decks" để mobile hiển thị các khối hộp như "Quán Cafe", "Airport Check-in", "Nhà hàng"...
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "decks": [
+      {
+        "sessionId": "uuid",
+        "scene": {
+          "id": "uuid",
+          "title": "Airport Check-in",
+          "category": "TRAVEL",
+          "difficulty": "A2",
+          "characterName": "David",
+          "characterRole": "Check-in Staff"
+        },
+        "sessionStatus": "COMPLETED",
+        "startedAt": "2026-04-02T10:00:00.000Z",
+        "endedAt": "2026-04-02T10:30:00.000Z",
+        "wordsCount": 5,
+        "masteredCount": 2,
+        "dueWordsCount": 3,
+        "completionPercent": 40,
+        "latestEncounterAt": "2026-04-05T09:10:00.000Z"
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+### 24b. GET `/vocabulary/decks/:sessionId`
+Lấy chi tiết words nằm trong một deck session cụ thể.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "deck": {
+      "sessionId": "uuid",
+      "scene": {
+        "id": "uuid",
+        "title": "Airport Check-in",
+        "category": "TRAVEL",
+        "difficulty": "A2",
+        "characterName": "David",
+        "characterRole": "Check-in Staff"
+      },
+      "sessionStatus": "COMPLETED",
+      "startedAt": "2026-04-02T10:00:00.000Z",
+      "endedAt": "2026-04-02T10:30:00.000Z",
+      "wordsCount": 5,
+      "masteredCount": 2,
+      "dueWordsCount": 3,
+      "completionPercent": 40
+    },
+    "words": [
+      {
+        "occurrenceId": "uuid",
+        "vocabularyId": "uuid",
+        "word": "boarding pass",
+        "definition": "the document that allows you to get on a plane",
+        "example": "May I see your boarding pass, please?",
+        "sampleSentence": "May I see your boarding pass, please?",
+        "isMastered": false,
+        "needsReview": true,
+        "encounterCount": 2,
+        "srsLevel": 0,
+        "nextReviewAt": null
+      }
+    ]
+  }
+}
+```
+
 ### 25. POST `/vocabulary`
-Lưu một từ mới vào danh sách học. Endpoint này hỗ trợ cả auto-save từ `sceneVocabularyId` và manual-save qua cặp `word/definition`.
+Save một từ vào dictionary tổng hợp. Nếu từ này đã có sẵn trong dictionary của user, backend **không coi là lỗi duplicate** nữa. Thay vào đó, nếu request đến từ một `sourceSessionId` mới, backend sẽ tạo thêm một `occurrence` để ghi nhận rằng user đã gặp lại từ đó trong ngữ cảnh mới.
 
 **Request body - Auto save**
 ```json
 {
   "sceneVocabularyId": "uuid",
-  "sourceSessionId": "uuid"
+  "sourceSessionId": "uuid",
+  "sampleSentence": "May I see your boarding pass, please?"
 }
 ```
 
@@ -780,14 +1287,16 @@ Lưu một từ mới vào danh sách học. Endpoint này hỗ trợ cả auto-
 {
   "word": "queue number",
   "definition": "a number that shows your turn while waiting in line",
-  "sourceSessionId": "uuid"
+  "sourceSessionId": "uuid",
+  "sampleSentence": "Please wait until your queue number appears."
 }
 ```
 
 **Quy tắc hiện tại**
-- Không cho lưu trùng theo `sceneVocabularyId` hoặc theo `word`.
 - Nếu có `sourceSessionId`, backend sẽ kiểm tra session đó thuộc user hiện tại.
-- Có side effect lên mission `SAVE_VOCABULARY`, badge `VOCAB_SAVED`, và `users.totalXp` nếu vừa hoàn thành mission/badge.
+- Dictionary tổng hợp chỉ tạo mới khi user chưa từng có từ đó.
+- Nếu user đã có từ đó rồi nhưng gặp lại trong session mới, backend sẽ tạo thêm `occurrence` mới và tăng `encounterCount`.
+- Mission `SAVE_VOCABULARY`, badge `VOCAB_SAVED`, và XP chỉ được cộng khi dictionary có **từ mới thật**, không phải mỗi lần gặp lại.
 
 **Response 201**
 ```json
@@ -797,21 +1306,70 @@ Lưu một từ mới vào danh sách học. Endpoint này hỗ trợ cả auto-
   "data": {
     "vocabulary": {
       "id": "uuid",
+      "normalizedWord": "queue number",
       "word": "queue number",
       "definition": "a number that shows your turn while waiting in line",
       "example": null,
       "isMastered": false,
+      "needsReview": true,
+      "encounterCount": 1,
+      "srsLevel": 0,
+      "nextReviewAt": null,
       "savedAt": "2026-04-04T15:00:00.000Z",
+      "lastSeenAt": "2026-04-04T15:00:00.000Z",
       "reviewedAt": null,
       "sourceSessionId": "uuid",
-      "scene": null
+      "scene": null,
+      "latestOccurrence": null
+    },
+    "createdDictionary": true,
+    "createdOccurrence": true
+  }
+}
+```
+
+### 25a. POST `/vocabulary/:id/review`
+Submit kết quả review SRS cho một dictionary word.
+
+**Request body**
+```json
+{
+  "isDone": true,
+  "recallQuality": 5
+}
+```
+
+**Quy tắc hiện tại**
+- Nếu `isDone = true`, backend tăng `srsLevel`, set `isMastered = true`, và tính `nextReviewAt`.
+- Nếu `isDone = false` hoặc `recallQuality` thấp, backend hạ nhẹ SRS state và đẩy review gần hơn.
+- `needsReview` được suy ra từ cặp `isMastered` + `nextReviewAt`.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "vocabulary": {
+      "id": "uuid",
+      "word": "boarding pass",
+      "isMastered": true,
+      "needsReview": false,
+      "srsLevel": 2,
+      "nextReviewAt": "2026-04-24T10:00:00.000Z"
+    },
+    "review": {
+      "isDone": true,
+      "recallQuality": 5,
+      "nextReviewAt": "2026-04-24T10:00:00.000Z",
+      "nextSrsLevel": 2
     }
   }
 }
 ```
 
 ### 26. DELETE `/vocabulary/:id`
-Xóa một từ khỏi danh sách học của user hiện tại.
+Xóa một dictionary word khỏi danh sách học của user hiện tại. Các occurrence thuộc về từ đó sẽ bị xóa cascade.
 
 **Response 200**
 ```json

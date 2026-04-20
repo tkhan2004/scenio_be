@@ -4,6 +4,7 @@ import { validate } from '../../middleware/validate';
 import * as scenesController from './scenes.controller';
 import {
   getSceneSchema,
+  getSceneVoicesSchema,
   listScenesSchema,
   recommendScenesSchema,
   searchScenesSchema,
@@ -28,6 +29,12 @@ router.get('/search', auth, validate(searchScenesSchema), scenesController.searc
  * @desc    Gợi ý kịch bản theo điểm yếu hiện tại của user
  */
 router.get('/recommend', auth, validate(recommendScenesSchema), scenesController.recommendScenes);
+
+/**
+ * @route   GET /api/scenes/:id/voices
+ * @desc    Lấy quick-pick voices và advanced voice catalog cho scene
+ */
+router.get('/:id/voices', auth, validate(getSceneVoicesSchema), scenesController.getSceneVoices);
 
 /**
  * @route   GET /api/scenes/:id

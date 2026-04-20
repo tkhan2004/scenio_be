@@ -105,30 +105,72 @@ export async function seedActivityData(input: ActivitySeedInput): Promise<Activi
     isMastered: boolean;
     reviewedAt?: Date | null;
   }) {
-    const existing = await prisma.userVocabulary.findUnique({
-      where: {
-        userId_sceneVocabularyId: {
-          userId: args.userId,
-          sceneVocabularyId: args.sceneVocabularyId,
-        },
+    const sceneVocabulary = await prisma.sceneVocabulary.findUnique({
+      where: { id: args.sceneVocabularyId },
+      select: {
+        id: true,
+        word: true,
+        definition: true,
       },
-      select: { id: true },
+    });
+
+    if (!sceneVocabulary) {
+      throw new Error(`Scene vocabulary ${args.sceneVocabularyId} not found`);
+    }
+
+    const normalizedWord = sceneVocabulary.word.trim().toLowerCase();
+    const existing = await prisma.userVocabulary.findFirst({
+      where: {
+        userId: args.userId,
+        normalizedWord,
+      },
+      select: { id: true, encounterCount: true },
     });
 
     const data = {
       userId: args.userId,
       sceneVocabularyId: args.sceneVocabularyId,
+      normalizedWord,
+      word: sceneVocabulary.word,
+      definition: sceneVocabulary.definition,
       sourceSessionId: args.sourceSessionId ?? null,
       isMastered: args.isMastered,
+      encounterCount: existing?.encounterCount ?? 1,
+      lastSeenAt: args.reviewedAt ?? new Date(),
       reviewedAt: args.reviewedAt ?? null,
     };
 
-    return existing
+    const vocabulary = existing
       ? prisma.userVocabulary.update({
           where: { id: existing.id },
           data,
         })
       : prisma.userVocabulary.create({ data });
+
+    const saved = await vocabulary;
+
+    if (args.sourceSessionId) {
+      const occurrence = await prisma.userVocabularyOccurrence.findFirst({
+        where: {
+          userVocabularyId: saved.id,
+          sessionId: args.sourceSessionId,
+        },
+        select: { id: true },
+      });
+
+      if (!occurrence) {
+        await prisma.userVocabularyOccurrence.create({
+          data: {
+            userVocabularyId: saved.id,
+            userId: args.userId,
+            sessionId: args.sourceSessionId,
+            sampleSentence: null,
+          },
+        });
+      }
+    }
+
+    return saved;
   }
 
   async function upsertManualUserVocabulary(args: {
@@ -139,34 +181,59 @@ export async function seedActivityData(input: ActivitySeedInput): Promise<Activi
     isMastered: boolean;
     reviewedAt?: Date | null;
   }) {
+    const normalizedWord = args.word.trim().toLowerCase();
     const existing = await prisma.userVocabulary.findFirst({
       where: {
         userId: args.userId,
-        sceneVocabularyId: null,
-        word: {
-          equals: args.word,
-          mode: 'insensitive',
-        },
+        normalizedWord,
       },
-      select: { id: true },
+      select: { id: true, encounterCount: true },
     });
 
     const data = {
       userId: args.userId,
       sceneVocabularyId: null,
+      normalizedWord,
       word: args.word,
       definition: args.definition,
       sourceSessionId: args.sourceSessionId ?? null,
       isMastered: args.isMastered,
+      encounterCount: existing?.encounterCount ?? 1,
+      lastSeenAt: args.reviewedAt ?? new Date(),
       reviewedAt: args.reviewedAt ?? null,
     };
 
-    return existing
+    const vocabulary = existing
       ? prisma.userVocabulary.update({
           where: { id: existing.id },
           data,
         })
       : prisma.userVocabulary.create({ data });
+
+    const saved = await vocabulary;
+
+    if (args.sourceSessionId) {
+      const occurrence = await prisma.userVocabularyOccurrence.findFirst({
+        where: {
+          userVocabularyId: saved.id,
+          sessionId: args.sourceSessionId,
+        },
+        select: { id: true },
+      });
+
+      if (!occurrence) {
+        await prisma.userVocabularyOccurrence.create({
+          data: {
+            userVocabularyId: saved.id,
+            userId: args.userId,
+            sessionId: args.sourceSessionId,
+            sampleSentence: null,
+          },
+        });
+      }
+    }
+
+    return saved;
   }
 
   await Promise.all([

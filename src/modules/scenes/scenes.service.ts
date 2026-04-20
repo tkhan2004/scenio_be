@@ -1,5 +1,6 @@
 import { Level, Prisma, SceneCategory } from '@prisma/client';
 import * as scenesRepo from './scenes.repository';
+import * as voicesService from '../voices/voices.service';
 import {
   ListScenesQuery,
   RecommendScenesQuery,
@@ -335,7 +336,9 @@ export async function recommendScenes(userId: string, query: RecommendScenesQuer
   const recentSessions = await scenesRepo.findRecentCompletedSessionsForRecommendation(userId, 5);
   const weakestSkill = getWeakestSkill(recentSessions, user.selfAssessment);
   const goalCategories = mapGoalToCategories(user.learningGoal);
-  const recentSceneIds = recentSessions.map((session) => session.sceneId);
+  const recentSceneIds = recentSessions
+    .map((session) => session.sceneId)
+    .filter((sceneId): sceneId is string => Boolean(sceneId));
 
   const primaryCandidates = await scenesRepo.findRecommendationSceneCandidates(
     allowedLevels,
@@ -382,4 +385,14 @@ export async function getSceneById(sceneId: string) {
   return {
     scene: mapSceneDetail(scene),
   };
+}
+
+/**
+ * Function Objective - getSceneVoices
+ * Summary: Trả về quick-pick voices và advanced catalog cho một scene active.
+ * Inputs: sceneId từ params route.
+ * Returns: Scene summary, quick picks, và danh sách voice options cho màn chọn giọng.
+ */
+export async function getSceneVoices(sceneId: string) {
+  return voicesService.getSceneVoices(sceneId);
 }

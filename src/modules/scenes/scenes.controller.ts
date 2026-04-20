@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from 'express';
 import { fail, ok } from '../../utils/response';
 import {
   GetSceneParams,
+  GetSceneVoicesParams,
   ListScenesQuery,
   RecommendScenesQuery,
   SearchScenesQuery,
@@ -76,6 +77,22 @@ export const getScene = async (req: Request, res: Response, next: NextFunction) 
   try {
     const params = (req as any).validatedParams as GetSceneParams;
     const result = await scenesService.getSceneById(params.id);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - getSceneVoices
+ * Summary: Lấy quick picks và voice catalog phù hợp cho scene hiện tại.
+ * Inputs: req, res, next.
+ * Behavior: Lấy validatedParams -> gọi service -> trả response chuẩn.
+ */
+export const getSceneVoices = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const params = (req as any).validatedParams as GetSceneVoicesParams;
+    const result = await scenesService.getSceneVoices(params.id);
     ok(res, result);
   } catch (error) {
     next(error);

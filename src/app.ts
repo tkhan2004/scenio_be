@@ -15,6 +15,7 @@ import scenesRoutes from './modules/scenes/scenes.routes';
 import sessionsRoutes from './modules/sessions/sessions.routes';
 import usersRoutes from './modules/users/users.routes';
 import vocabularyRoutes from './modules/vocabulary/vocabulary.routes';
+import voicesRoutes from './modules/voices/voices.routes';
 
 const app: Express = express();
 
@@ -34,6 +35,7 @@ app.use('/api/scenes', scenesRoutes);
 app.use('/api/sessions', sessionsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/vocabulary', vocabularyRoutes);
+app.use('/api/voices', voicesRoutes);
 
 app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({ ok: true, timestamp: new Date().toISOString() });
