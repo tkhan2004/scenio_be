@@ -1,15 +1,23 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import { MessageRole, SceneCategory } from '@prisma/client';
+import { Level, MessageModality, MessageRole, SceneCategory, SessionModality } from '@prisma/client';
 import prisma from '../../config/database';
 import { getLLMClient, provider } from '../../config/llm';
 import {
   AbandonSessionParams,
+  CreateRealtimeTokenParams,
   GetSessionResultParams,
   LevelTestHistoryItem,
   LevelTestInput,
+  SendSessionMessageInput,
+  SendSessionMessageParams,
+  StartCustomSessionInput,
+  SessionHintInput,
+  SessionHintParams,
   StartSessionInput,
 } from '../../schemas/sessions';
+import * as voicesService from '../voices/voices.service';
+import * as sessionsRealtimeService from './sessions.realtime.service';
 import * as sessionsRepo from './sessions.repository';
 
 const LEVEL_RESULT_PATTERN = /\[LEVEL_RESULT\]([\s\S]*?)\[\/LEVEL_RESULT\]/;
@@ -27,6 +35,15 @@ type LevelTestResult = {
   isComplete: boolean;
   level?: (typeof LEVEL_VALUES)[number];
   rationale?: string;
+};
+
+type MessageSource = SendSessionMessageInput['source'];
+
+const MESSAGE_SOURCE_MAP: Record<MessageSource, { role: MessageRole; modality: MessageModality }> = {
+  USER_TEXT: { role: MessageRole.USER, modality: MessageModality.TEXT },
+  USER_AUDIO: { role: MessageRole.USER, modality: MessageModality.AUDIO_TRANSCRIPT },
+  AI_TEXT: { role: MessageRole.AI, modality: MessageModality.TEXT },
+  AI_AUDIO: { role: MessageRole.AI, modality: MessageModality.AUDIO_TRANSCRIPT },
 };
 
 /**
@@ -64,6 +81,33 @@ After the 5th user response, end the conversation naturally, then on a NEW LINE 
 [LEVEL_RESULT]{"level":"B1","rationale":"Có thể diễn đạt ý tưởng rõ ràng, đôi khi còn lỗi nhỏ"}[/LEVEL_RESULT]
 
 Do NOT append the marker before the final assessment.`;
+}
+
+/**
+ * Helper - getHintSystemPrompt
+ * Summary: Tạo prompt sinh hint ngắn, đúng vai và không làm hộ toàn bộ user turn.
+ */
+function getHintSystemPrompt(args: {
+  sceneTitle: string;
+  characterName: string;
+  characterRole: string;
+  missionText: string;
+  focus?: string;
+}) {
+  return `You are a speaking coach for an English roleplay app.
+
+Scene: ${args.sceneTitle}
+AI character: ${args.characterName} (${args.characterRole})
+Mission: ${args.missionText}
+Focus: ${args.focus || 'conversation'}
+
+Rules:
+- Give only one short hint in plain English.
+- Keep the hint under 22 words.
+- Do not answer fully for the learner.
+- Do not break the roleplay context.
+- Prefer nudging the learner toward the next useful question or sentence.
+- Avoid bullet points, labels, or JSON.`;
 }
 
 /**
@@ -138,15 +182,245 @@ function buildOpeningMessage(scene: NonNullable<Awaited<ReturnType<typeof sessio
 }
 
 /**
- * Helper - mapSessionMessage
- * Summary: Chuẩn hóa message transcript cho endpoint result.
+ * Helper - getEstimatedMinutesFromLength
+ * Summary: Map conversationLength của custom practice sang estimated minutes cho client.
  */
-function mapSessionMessage(message: sessionsRepo.SessionResultRecord['messages'][number]) {
+function getEstimatedMinutesFromLength(conversationLength?: string | null) {
+  switch (conversationLength) {
+    case 'SHORT':
+      return 8;
+    case 'LONG':
+      return 18;
+    case 'MEDIUM':
+    default:
+      return 12;
+  }
+}
+
+/**
+ * Helper - getCustomPracticeDisplayTitle
+ * Summary: Tạo title hiển thị gọn cho custom practice session.
+ */
+function getCustomPracticeDisplayTitle(input: StartCustomSessionInput) {
+  const summary = input.topicSummary.trim();
+  if (summary.length <= 60) {
+    return summary;
+  }
+
+  const goal = input.practiceGoal.trim();
+  return goal.length <= 60 ? goal : `${goal.slice(0, 57).trimEnd()}...`;
+}
+
+/**
+ * Helper - getCustomPracticeDisplaySubtitle
+ * Summary: Tạo subtitle hiển thị cho review/start response của custom practice.
+ */
+function getCustomPracticeDisplaySubtitle(input: StartCustomSessionInput) {
+  return `You are speaking with ${input.aiPersona.aiDisplayName}, a ${input.aiPersona.aiRole}.`;
+}
+
+/**
+ * Helper - getCustomPracticeMissionText
+ * Summary: Chuẩn hóa mission text của custom practice từ successOutcome hoặc practiceGoal.
+ */
+function getCustomPracticeMissionText(input: StartCustomSessionInput) {
+  return input.successOutcome?.trim() || input.practiceGoal.trim();
+}
+
+/**
+ * Helper - getCustomPracticeOpeningMessage
+ * Summary: Sinh opening message deterministic cho custom practice mà chưa cần LLM orchestration.
+ */
+function getCustomPracticeOpeningMessage(input: StartCustomSessionInput) {
+  const channelLine = input.context.conversationChannel === 'PHONE_CALL'
+    ? 'Thanks for taking my call.'
+    : input.context.conversationChannel === 'VIDEO_CALL'
+      ? 'Thanks for joining this call.'
+      : 'Thanks for meeting with me.';
+
+  const firstQuestion = input.context.contextType === 'INTERVIEW'
+    ? 'Could you start by introducing yourself?'
+    : input.context.contextType === 'CUSTOMER_SERVICE'
+      ? 'How can I help you today?'
+      : input.context.contextType === 'PHONE_CALL'
+        ? 'What would you like to discuss first?'
+        : 'How would you like to begin?';
+
+  return `Hi, I'm ${input.aiPersona.aiDisplayName}, the ${input.aiPersona.aiRole}. ${channelLine} ${firstQuestion}`;
+}
+
+/**
+ * Helper - getCustomPracticeSystemPrompt
+ * Summary: Tạo system prompt có cấu trúc cho custom practice session.
+ */
+function getCustomPracticeSystemPrompt(input: StartCustomSessionInput) {
+  const difficulty = input.learningConfig.difficulty || input.userProfile.userEnglishLevel || Level.A2;
+  const specialConditions = input.context.specialConditions.length > 0
+    ? input.context.specialConditions.join(', ')
+    : 'none';
+  const focusSkills = input.learningConfig.focusSkills.length > 0
+    ? input.learningConfig.focusSkills.join(', ')
+    : 'general communication';
+  const mustUseVocabulary = input.learningConfig.mustUseVocabulary.length > 0
+    ? input.learningConfig.mustUseVocabulary.join(', ')
+    : 'none';
+  const avoidTopics = input.learningConfig.avoidTopics.length > 0
+    ? input.learningConfig.avoidTopics.join(', ')
+    : 'none';
+
+  return `You are roleplaying as ${input.aiPersona.aiDisplayName}, a ${input.aiPersona.aiRole}.
+
+Conversation setup:
+- Practice goal: ${input.practiceGoal}
+- Success outcome: ${input.successOutcome?.trim() || input.practiceGoal}
+- Topic summary: ${input.topicSummary}
+- Context type: ${input.context.contextType}
+- Location: ${input.context.location?.trim() || 'not specified'}
+- Conversation channel: ${input.context.conversationChannel}
+- Time pressure: ${input.context.timePressure || 'MEDIUM'}
+- Special conditions: ${specialConditions}
+
+Learner setup:
+- Learner role: ${input.userProfile.userRole}
+- Learner intent: ${input.userProfile.userIntent?.trim() || 'not specified'}
+- Learner English level: ${input.userProfile.userEnglishLevel || difficulty}
+- Learner notes: ${input.userProfile.userPersonaNotes?.trim() || 'none'}
+
+Your persona:
+- Relationship to learner: ${input.aiPersona.aiRelationshipToUser || 'not specified'}
+- Primary goal: ${input.aiPersona.aiPrimaryGoal?.trim() || 'help the learner practice naturally'}
+- Behavior style: ${input.aiPersona.aiBehaviorStyle?.trim() || 'natural and believable'}
+- Gender presentation: ${input.aiPersona.aiGenderPresentation}
+- Voice tone: ${input.aiPersona.aiVoiceTone || 'balanced'}
+- Speech speed: ${input.aiPersona.aiSpeechSpeed || 'NORMAL'}
+- Accent preference: ${input.aiPersona.aiAccentPreference?.trim() || 'neutral'}
+
+Coaching rules:
+- Difficulty target: ${difficulty}
+- Conversation length: ${input.learningConfig.conversationLength || 'MEDIUM'}
+- Correction style: ${input.learningConfig.correctionStyle || 'END_ONLY'}
+- Hint frequency: ${input.learningConfig.hintFrequency || 'LOW'}
+- Response complexity: ${input.learningConfig.responseComplexity || 'BALANCED'}
+- Focus skills: ${focusSkills}
+- Must-use vocabulary: ${mustUseVocabulary}
+- Avoid topics: ${avoidTopics}
+- Extra instructions: ${input.learningConfig.customInstructions?.trim() || 'none'}
+
+Scenio session rules:
+- Stay in character at all times.
+- Speak only in English unless the system explicitly asks otherwise.
+- Keep responses concise, natural, and appropriate for the learner level.
+- Move the conversation toward the learner's goal naturally.
+- Be believable as a real conversation partner, not a generic tutor.
+- Only give explicit correction if the configured correction style allows it.`;
+}
+
+function getActiveSessionConflictDetails(
+  activeSession: Awaited<ReturnType<typeof sessionsRepo.findActiveUserSession>>,
+) {
+  if (!activeSession) return [];
+
+  const title = activeSession.sourceType === 'CUSTOM_PRACTICE'
+    ? activeSession.customPracticeConfig?.displayTitle ?? 'Custom Practice'
+    : activeSession.scene?.title ?? 'Unknown Scene';
+  const characterName = activeSession.sourceType === 'CUSTOM_PRACTICE'
+    ? activeSession.customPracticeConfig?.aiDisplayName ?? 'AI'
+    : activeSession.scene?.characterName ?? 'AI';
+
+  return [
+    { field: 'activeSession.id', message: activeSession.id },
+    { field: 'activeSession.sourceType', message: activeSession.sourceType },
+    { field: 'activeSession.sceneId', message: activeSession.sceneId ?? '' },
+    { field: 'activeSession.customPracticeConfigId', message: activeSession.customPracticeConfigId ?? '' },
+    { field: 'activeSession.sceneTitle', message: title },
+    { field: 'activeSession.characterName', message: characterName },
+    { field: 'activeSession.startedAt', message: activeSession.startedAt.toISOString() },
+  ];
+}
+
+function getSessionConversationSource(
+  session: sessionsRepo.SessionContextRecord,
+) {
+  if (session.sourceType === 'CUSTOM_PRACTICE' && session.customPracticeConfig) {
+    return {
+      id: session.customPracticeConfig.id,
+      title: session.customPracticeConfig.displayTitle,
+      category: session.customPracticeConfig.contextType,
+      difficulty: session.customPracticeConfig.difficulty,
+      description: session.customPracticeConfig.topicSummary,
+      missionText: session.customPracticeConfig.missionText,
+      characterName: session.customPracticeConfig.aiDisplayName,
+      characterRole: session.customPracticeConfig.aiRole,
+      systemPrompt: session.customPracticeConfig.systemPrompt,
+    };
+  }
+
+  if (!session.scene) {
+    throw Object.assign(new Error('Session hiện không có source context hợp lệ'), {
+      code: 'SESSION_SOURCE_INVALID',
+      status: 500,
+    });
+  }
+
+  return {
+    id: session.scene.id,
+    title: session.scene.title,
+    category: session.scene.category,
+    difficulty: session.scene.difficulty,
+    description: session.scene.description,
+    missionText: session.scene.missionText,
+    characterName: session.scene.characterName,
+    characterRole: session.scene.characterRole,
+    systemPrompt: session.scene.systemPrompt,
+  };
+}
+
+function getSessionResultSource(
+  session: sessionsRepo.SessionResultRecord,
+) {
+  if (session.sourceType === 'CUSTOM_PRACTICE' && session.customPracticeConfig) {
+    return {
+      title: session.customPracticeConfig.displayTitle,
+      category: session.customPracticeConfig.contextType,
+      difficulty: session.customPracticeConfig.difficulty,
+      description: session.customPracticeConfig.topicSummary,
+      characterName: session.customPracticeConfig.aiDisplayName,
+      characterRole: session.customPracticeConfig.aiRole,
+    };
+  }
+
+  if (!session.scene) {
+    throw Object.assign(new Error('Session result hiện không có source context hợp lệ'), {
+      code: 'SESSION_SOURCE_INVALID',
+      status: 500,
+    });
+  }
+
+  return {
+    title: session.scene.title,
+    category: session.scene.category,
+    difficulty: session.scene.difficulty,
+    description: session.scene.description,
+    characterName: session.scene.characterName,
+    characterRole: session.scene.characterRole,
+  };
+}
+
+/**
+ * Helper - mapSessionMessage
+ * Summary: Chuẩn hóa message transcript cho endpoint result và sync response.
+ */
+function mapSessionMessage(message: sessionsRepo.SessionMessageRecord | sessionsRepo.SessionResultRecord['messages'][number]) {
   return {
     id: message.id,
     role: message.role,
     content: message.content,
     turnIndex: message.turnIndex,
+    providerEventId: message.providerEventId,
+    modality: message.modality,
+    audioStartMs: message.audioStartMs,
+    audioEndMs: message.audioEndMs,
+    isFinal: message.isFinal,
     hasError: message.hasError,
     errorType: message.errorType,
     originalPhrase: message.originalPhrase,
@@ -159,23 +433,27 @@ function mapSessionMessage(message: sessionsRepo.SessionResultRecord['messages']
 }
 
 /**
- * Helper - generateLevelTestReply
- * Summary: Gọi Claude hoặc OpenAI để sinh phản hồi cho level test.
- * Notes: Provider được chọn bởi config hiện tại trong src/config/llm.ts.
+ * Helper - callTextProvider
+ * Summary: Gọi Claude hoặc OpenAI để sinh ra một đoạn text theo system prompt hiện tại.
+ * Notes: Dùng chung cho level test và session hint.
  */
-async function generateLevelTestReply(messages: ProviderMessage[]) {
+async function callTextProvider(args: {
+  systemPrompt: string;
+  messages: ProviderMessage[];
+  temperature: number;
+  maxTokens: number;
+}) {
   const client = getLLMClient();
-  const systemPrompt = getLevelTestSystemPrompt();
 
   try {
     if (provider === 'claude') {
       const anthropic = client as Anthropic;
       const response = await anthropic.messages.create({
         model: CLAUDE_LEVEL_TEST_MODEL,
-        max_tokens: 400,
-        temperature: 0.4,
-        system: systemPrompt,
-        messages,
+        max_tokens: args.maxTokens,
+        temperature: args.temperature,
+        system: args.systemPrompt,
+        messages: args.messages,
       });
 
       const text = response.content
@@ -194,10 +472,11 @@ async function generateLevelTestReply(messages: ProviderMessage[]) {
     const openai = client as OpenAI;
     const response = await openai.chat.completions.create({
       model: OPENAI_LEVEL_TEST_MODEL,
-      temperature: 0.4,
+      temperature: args.temperature,
+      max_tokens: args.maxTokens,
       messages: [
-        { role: 'system', content: systemPrompt },
-        ...messages,
+        { role: 'system', content: args.systemPrompt },
+        ...args.messages,
       ],
     });
 
@@ -212,14 +491,50 @@ async function generateLevelTestReply(messages: ProviderMessage[]) {
       throw error;
     }
 
-    throw Object.assign(new Error('Không thể gọi AI engine cho level test'), {
+    throw Object.assign(new Error('Không thể gọi AI engine'), {
       code: 'AI_ENGINE_ERROR',
       status: 502,
-      details: error instanceof Error
-        ? [{ field: 'provider', message: error.message }]
-        : null,
+      details: error instanceof Error ? [{ field: 'provider', message: error.message }] : null,
     });
   }
+}
+
+/**
+ * Helper - generateLevelTestReply
+ * Summary: Gọi provider text để sinh phản hồi cho level test.
+ */
+async function generateLevelTestReply(messages: ProviderMessage[]) {
+  return callTextProvider({
+    systemPrompt: getLevelTestSystemPrompt(),
+    messages,
+    temperature: 0.4,
+    maxTokens: 400,
+  });
+}
+
+/**
+ * Helper - buildHintFallback
+ * Summary: Sinh hint deterministic khi provider text chưa sẵn sàng hoặc lỗi runtime.
+ */
+function buildHintFallback(args: {
+  characterName: string;
+  characterRole: string;
+  missionText: string;
+  focus?: string;
+}) {
+  if (args.focus === 'pronunciation') {
+    return 'Speak a little slower and keep each word clear before you continue.';
+  }
+
+  if (args.focus === 'grammar') {
+    return 'Try one short sentence with a clear subject, verb, and question for the next turn.';
+  }
+
+  if (args.focus === 'vocabulary') {
+    return `Use one keyword from the mission and ask ${args.characterName} for more detail.`;
+  }
+
+  return `Ask ${args.characterName}, the ${args.characterRole}, one short question that moves the mission forward.`;
 }
 
 /**
@@ -266,16 +581,17 @@ export async function runLevelTest(userId: string, input: LevelTestInput): Promi
 
 /**
  * Function Objective - startSession
- * Summary: Tạo session ACTIVE mới và sinh opening message deterministic cho client.
- * Inputs: userId từ access token và sceneId đã validate.
- * Behavior: Kiểm tra user/scene tồn tại -> chặn nhiều session ACTIVE song song -> tạo session + opening message.
- * Returns: sessionId mới và openingMessage đầu tiên để render màn chat.
+ * Summary: Tạo session ACTIVE mới với voice selection và opening message deterministic.
+ * Inputs: userId từ access token, sceneId, optional voiceProfileId và modality.
+ * Behavior: Kiểm tra user/scene tồn tại -> resolve voice -> chặn session ACTIVE song song -> tạo session + opening message.
+ * Returns: sessionId mới, openingMessage, modality, và selectedVoice để client mở màn practice.
  */
 export async function startSession(userId: string, input: StartSessionInput) {
-  const [user, scene, activeSession] = await Promise.all([
+  const [user, scene, activeSession, selectedVoice] = await Promise.all([
     sessionsRepo.findUserById(userId),
     sessionsRepo.findSceneForSessionStart(input.sceneId),
     sessionsRepo.findActiveUserSession(userId),
+    voicesService.resolveVoiceSelection(input.sceneId, input.voiceProfileId),
   ]);
 
   if (!user) {
@@ -290,13 +606,7 @@ export async function startSession(userId: string, input: StartSessionInput) {
     throw Object.assign(new Error('Bạn đang có một phiên học chưa hoàn thành'), {
       code: 'SESSION_ALREADY_ACTIVE',
       status: 409,
-      details: [
-        { field: 'activeSession.id', message: activeSession.id },
-        { field: 'activeSession.sceneId', message: activeSession.sceneId },
-        { field: 'activeSession.sceneTitle', message: activeSession.scene.title },
-        { field: 'activeSession.characterName', message: activeSession.scene.characterName },
-        { field: 'activeSession.startedAt', message: activeSession.startedAt.toISOString() },
-      ],
+      details: getActiveSessionConflictDetails(activeSession),
     });
   }
 
@@ -307,6 +617,11 @@ export async function startSession(userId: string, input: StartSessionInput) {
       {
         userId,
         sceneId: scene.id,
+        sourceType: 'CURATED_SCENE',
+        modality: input.modality ?? SessionModality.TEXT,
+        voiceProfileId: selectedVoice.id,
+        voiceProvider: selectedVoice.realtimeProvider,
+        voiceSnapshotName: selectedVoice.displayName,
       },
       tx,
     );
@@ -317,6 +632,7 @@ export async function startSession(userId: string, input: StartSessionInput) {
         role: MessageRole.AI,
         content: openingMessage,
         turnIndex: 0,
+        modality: MessageModality.TEXT,
       },
       tx,
     );
@@ -326,7 +642,413 @@ export async function startSession(userId: string, input: StartSessionInput) {
 
   return {
     sessionId: createdSession.id,
+    sourceType: createdSession.sourceType,
     openingMessage,
+    modality: createdSession.modality,
+    selectedVoice: {
+      id: selectedVoice.id,
+      displayName: selectedVoice.displayName,
+      gender: selectedVoice.gender,
+      locale: selectedVoice.locale,
+      accent: selectedVoice.accent,
+      realtimeVoiceId: selectedVoice.realtimeVoiceId,
+    },
+  };
+}
+
+/**
+ * Function Objective - startCustomSession
+ * Summary: Tạo custom practice session từ structured brief thay vì scene có sẵn.
+ * Inputs: userId từ access token và payload custom practice đã validate.
+ * Behavior: Kiểm tra user -> resolve voice -> chặn session ACTIVE song song -> lưu custom config + session + opening message.
+ * Returns: sessionId mới, custom practice summary, openingMessage, modality, và selectedVoice.
+ */
+export async function startCustomSession(userId: string, input: StartCustomSessionInput) {
+  const [user, activeSession, selectedVoice] = await Promise.all([
+    sessionsRepo.findUserById(userId),
+    sessionsRepo.findActiveUserSession(userId),
+    voicesService.resolveCustomPracticeVoiceSelection(
+      input.aiPersona.aiVoicePresetId,
+      input.aiPersona.aiGenderPresentation,
+    ),
+  ]);
+
+  if (!user) {
+    throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+  }
+
+  if (activeSession) {
+    throw Object.assign(new Error('Bạn đang có một phiên học chưa hoàn thành'), {
+      code: 'SESSION_ALREADY_ACTIVE',
+      status: 409,
+      details: getActiveSessionConflictDetails(activeSession),
+    });
+  }
+
+  const difficulty = input.learningConfig.difficulty || input.userProfile.userEnglishLevel || user.level || Level.A2;
+  const displayTitle = getCustomPracticeDisplayTitle(input);
+  const displaySubtitle = getCustomPracticeDisplaySubtitle(input);
+  const missionText = getCustomPracticeMissionText(input);
+  const estimatedMinutes = getEstimatedMinutesFromLength(input.learningConfig.conversationLength);
+  const openingMessage = getCustomPracticeOpeningMessage(input);
+  const systemPrompt = getCustomPracticeSystemPrompt(input);
+
+  const createdSession = await prisma.$transaction(async (tx) => {
+    const customConfig = await sessionsRepo.createCustomPracticeConfig(
+      {
+        user: { connect: { id: userId } },
+        practiceGoal: input.practiceGoal.trim(),
+        successOutcome: input.successOutcome?.trim(),
+        topicSummary: input.topicSummary.trim(),
+        contextType: input.context.contextType,
+        location: input.context.location?.trim(),
+        conversationChannel: input.context.conversationChannel,
+        timePressure: input.context.timePressure ?? null,
+        specialConditions: input.context.specialConditions,
+        userRole: input.userProfile.userRole.trim(),
+        userIntent: input.userProfile.userIntent?.trim(),
+        userEnglishLevel: input.userProfile.userEnglishLevel,
+        userPersonaNotes: input.userProfile.userPersonaNotes?.trim(),
+        aiRole: input.aiPersona.aiRole.trim(),
+        aiDisplayName: input.aiPersona.aiDisplayName.trim(),
+        aiRelationshipToUser: input.aiPersona.aiRelationshipToUser ?? null,
+        aiPrimaryGoal: input.aiPersona.aiPrimaryGoal?.trim(),
+        aiBehaviorStyle: input.aiPersona.aiBehaviorStyle?.trim(),
+        aiGenderPresentation: input.aiPersona.aiGenderPresentation,
+        aiVoicePreset: input.aiPersona.aiVoicePresetId
+          ? { connect: { id: input.aiPersona.aiVoicePresetId } }
+          : undefined,
+        aiVoiceTone: input.aiPersona.aiVoiceTone ?? null,
+        aiSpeechSpeed: input.aiPersona.aiSpeechSpeed ?? null,
+        aiAccentPreference: input.aiPersona.aiAccentPreference?.trim(),
+        difficulty,
+        conversationLength: input.learningConfig.conversationLength ?? null,
+        correctionStyle: input.learningConfig.correctionStyle ?? null,
+        hintFrequency: input.learningConfig.hintFrequency ?? null,
+        responseComplexity: input.learningConfig.responseComplexity ?? null,
+        focusSkills: input.learningConfig.focusSkills,
+        mustUseVocabulary: input.learningConfig.mustUseVocabulary,
+        avoidTopics: input.learningConfig.avoidTopics,
+        customInstructions: input.learningConfig.customInstructions?.trim(),
+        displayTitle,
+        displaySubtitle,
+        missionText,
+        estimatedMinutes,
+        openingMessage,
+        systemPrompt,
+      },
+      tx,
+    );
+
+    const session = await sessionsRepo.createSession(
+      {
+        userId,
+        customPracticeConfigId: customConfig.id,
+        sourceType: 'CUSTOM_PRACTICE',
+        modality: input.modality ?? SessionModality.TEXT,
+        voiceProfileId: selectedVoice.id,
+        voiceProvider: selectedVoice.realtimeProvider,
+        voiceSnapshotName: selectedVoice.displayName,
+      },
+      tx,
+    );
+
+    await sessionsRepo.createMessage(
+      {
+        sessionId: session.id,
+        role: MessageRole.AI,
+        content: openingMessage,
+        turnIndex: 0,
+        modality: MessageModality.TEXT,
+      },
+      tx,
+    );
+
+    return {
+      session,
+      customConfig,
+    };
+  });
+
+  return {
+    sessionId: createdSession.session.id,
+    sourceType: createdSession.session.sourceType,
+    openingMessage,
+    modality: createdSession.session.modality,
+    customPractice: {
+      id: createdSession.customConfig.id,
+      displayTitle: createdSession.customConfig.displayTitle,
+      displaySubtitle: createdSession.customConfig.displaySubtitle,
+      contextType: createdSession.customConfig.contextType,
+      difficulty: createdSession.customConfig.difficulty,
+      topicSummary: createdSession.customConfig.topicSummary,
+      missionText: createdSession.customConfig.missionText,
+      estimatedMinutes: createdSession.customConfig.estimatedMinutes,
+      aiPersona: {
+        displayName: createdSession.customConfig.aiDisplayName,
+        role: createdSession.customConfig.aiRole,
+        behaviorStyle: createdSession.customConfig.aiBehaviorStyle,
+        genderPresentation: createdSession.customConfig.aiGenderPresentation,
+        voiceTone: createdSession.customConfig.aiVoiceTone,
+        accentPreference: createdSession.customConfig.aiAccentPreference,
+      },
+    },
+    selectedVoice: {
+      id: selectedVoice.id,
+      displayName: selectedVoice.displayName,
+      gender: selectedVoice.gender,
+      locale: selectedVoice.locale,
+      accent: selectedVoice.accent,
+      realtimeVoiceId: selectedVoice.realtimeVoiceId,
+    },
+  };
+}
+
+/**
+ * Function Objective - createRealtimeToken
+ * Summary: Mint Realtime client secret cho một session ACTIVE thuộc user hiện tại.
+ * Inputs: userId và session params đã validate.
+ * Behavior: Kiểm tra ownership -> kiểm tra ACTIVE -> build instructions + gọi OpenAI -> lưu providerSessionId.
+ * Returns: Client secret, session config, selected voice, và metadata phục vụ WebRTC client.
+ */
+export async function createRealtimeToken(userId: string, params: CreateRealtimeTokenParams) {
+  const session = await sessionsRepo.findOwnedSessionContext(userId, params.id);
+  if (!session) {
+    throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+  }
+
+  if (session.status !== 'ACTIVE') {
+    throw Object.assign(new Error('Chỉ session ACTIVE mới có thể mở realtime voice'), {
+      code: 'SESSION_NOT_ACTIVE',
+      status: 409,
+    });
+  }
+
+  if (!session.voiceProfile?.realtimeVoiceId) {
+    throw Object.assign(new Error('Session chưa có realtime voice hợp lệ'), {
+      code: 'VOICE_PROVIDER_NOT_CONFIGURED',
+      status: 409,
+    });
+  }
+
+  const realtime = await sessionsRealtimeService.createRealtimeTokenForSession(session);
+
+  await sessionsRepo.updateSessionById(session.id, {
+    modality: SessionModality.VOICE,
+    providerSessionId: realtime.providerSessionId ?? undefined,
+  });
+
+  return {
+    sessionId: session.id,
+    modality: 'VOICE',
+    realtimeProvider: 'OPENAI',
+    clientSecret: realtime.clientSecret,
+    sessionConfig: realtime.sessionConfig,
+    selectedVoice: realtime.selectedVoice,
+  };
+}
+
+/**
+ * Function Objective - sendSessionMessage
+ * Summary: Đồng bộ finalized transcript hoặc text turn từ client về backend session.
+ * Inputs: userId, session params, và payload source/content đã validate.
+ * Behavior: Kiểm tra ownership -> bỏ qua partial transcript -> lưu final message -> optionally complete session.
+ * Returns: Message vừa lưu và snapshot session hiện tại.
+ */
+export async function sendSessionMessage(
+  userId: string,
+  params: SendSessionMessageParams,
+  input: SendSessionMessageInput,
+) {
+  const session = await sessionsRepo.findOwnedSessionContext(userId, params.id);
+  if (!session) {
+    throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+  }
+
+  if (session.status !== 'ACTIVE') {
+    throw Object.assign(new Error('Không thể thêm message vào session không còn ACTIVE'), {
+      code: 'SESSION_NOT_ACTIVE',
+      status: 409,
+    });
+  }
+
+  if (input.providerEventId) {
+    const existing = await sessionsRepo.findMessageByProviderEventId(session.id, input.providerEventId);
+    if (existing) {
+      return {
+        stored: true,
+        message: mapSessionMessage(existing),
+        session: {
+          id: session.id,
+          status: session.status,
+          endedAt: session.endedAt,
+        },
+      };
+    }
+  }
+
+  if (!input.isFinal) {
+    return {
+      stored: false,
+      ignoredReason: 'PARTIAL_TRANSCRIPT',
+      session: {
+        id: session.id,
+        status: session.status,
+        endedAt: session.endedAt,
+      },
+    };
+  }
+
+  const sourceConfig = MESSAGE_SOURCE_MAP[input.source];
+  const turnIndex = input.turnIndex ?? await sessionsRepo.findNextTurnIndex(session.id);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const message = await sessionsRepo.createMessage(
+      {
+        sessionId: session.id,
+        role: sourceConfig.role,
+        content: input.content,
+        turnIndex,
+        providerEventId: input.providerEventId ?? null,
+        modality: sourceConfig.modality,
+        audioStartMs: input.audioStartMs ?? null,
+        audioEndMs: input.audioEndMs ?? null,
+        isFinal: true,
+      },
+      tx,
+    );
+
+    if (!input.completeSession) {
+      return {
+        message,
+        session: null,
+      };
+    }
+
+    const updatedSession = await sessionsRepo.updateSessionById(
+      session.id,
+      {
+        status: 'COMPLETED',
+        endedAt: new Date(),
+        grammarScore: input.completeSession.grammarScore,
+        vocabularyScore: input.completeSession.vocabularyScore,
+        naturalnessScore: input.completeSession.naturalnessScore,
+        xpEarned: input.completeSession.xpEarned ?? 0,
+      },
+      tx,
+    );
+
+    return {
+      message,
+      session: updatedSession,
+    };
+  });
+
+  return {
+    stored: true,
+    message: mapSessionMessage(result.message),
+    session: {
+      id: session.id,
+      status: result.session?.status ?? session.status,
+      endedAt: result.session?.endedAt ?? session.endedAt,
+    },
+  };
+}
+
+/**
+ * Function Objective - createSessionHint
+ * Summary: Sinh một hint ngắn cho session ACTIVE hiện tại.
+ * Inputs: userId, session params, và optional focus.
+ * Behavior: Kiểm tra ownership -> giới hạn 3 hint -> lấy transcript gần nhất -> gọi provider hoặc fallback -> lưu message hint.
+ * Returns: Hint message mới và hintCount hiện tại.
+ */
+export async function createSessionHint(
+  userId: string,
+  params: SessionHintParams,
+  input: SessionHintInput,
+) {
+  const session = await sessionsRepo.findOwnedSessionContext(userId, params.id);
+  if (!session) {
+    throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+  }
+
+  if (session.status !== 'ACTIVE') {
+    throw Object.assign(new Error('Chỉ session ACTIVE mới có thể xin hint'), {
+      code: 'SESSION_NOT_ACTIVE',
+      status: 409,
+    });
+  }
+
+  if (session.hintCount >= 3) {
+    throw Object.assign(new Error('Session này đã dùng tối đa 3 hint'), {
+      code: 'HINT_LIMIT_REACHED',
+      status: 409,
+    });
+  }
+
+  const recentMessages = await sessionsRepo.findRecentMessagesForSession(session.id, 8);
+  const source = getSessionConversationSource(session);
+  const providerMessages = recentMessages
+    .slice()
+    .reverse()
+    .map<ProviderMessage>((message) => ({
+      role: message.role === MessageRole.USER ? 'user' : 'assistant',
+      content: message.content,
+    }));
+
+  let hintText = '';
+  try {
+    hintText = await callTextProvider({
+      systemPrompt: getHintSystemPrompt({
+        sceneTitle: source.title,
+        characterName: source.characterName,
+        characterRole: source.characterRole,
+        missionText: source.missionText,
+        focus: input.focus,
+      }),
+      messages: providerMessages,
+      temperature: 0.3,
+      maxTokens: 80,
+    });
+  } catch {
+    hintText = buildHintFallback({
+      characterName: source.characterName,
+      characterRole: source.characterRole,
+      missionText: source.missionText,
+      focus: input.focus,
+    });
+  }
+
+  const turnIndex = await sessionsRepo.findNextTurnIndex(session.id);
+
+  const message = await prisma.$transaction(async (tx) => {
+    await sessionsRepo.updateSessionById(
+      session.id,
+      {
+        hintCount: {
+          increment: 1,
+        },
+      },
+      tx,
+    );
+
+    return sessionsRepo.createMessage(
+      {
+        sessionId: session.id,
+        role: MessageRole.AI,
+        content: hintText.trim(),
+        turnIndex,
+        modality: MessageModality.TEXT,
+        isFinal: true,
+        isHint: true,
+      },
+      tx,
+    );
+  });
+
+  return {
+    message: mapSessionMessage(message),
+    hintCount: session.hintCount + 1,
   };
 }
 
@@ -350,22 +1072,68 @@ export async function getSessionResult(userId: string, params: GetSessionResultP
     });
   }
 
+  const source = getSessionResultSource(session);
+
   return {
     session: {
       id: session.id,
+      sourceType: session.sourceType,
       status: session.status,
+      modality: session.modality,
+      providerSessionId: session.providerSessionId,
+      voiceSnapshotName: session.voiceSnapshotName,
       xpEarned: session.xpEarned,
       hintCount: session.hintCount,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
-      scene: {
-        id: session.scene.id,
-        title: session.scene.title,
-        category: session.scene.category,
-        difficulty: session.scene.difficulty,
-        description: session.scene.description,
-        characterName: session.scene.characterName,
-        characterRole: session.scene.characterRole,
+      voiceProfile: session.voiceProfile
+        ? {
+            id: session.voiceProfile.id,
+            displayName: session.voiceProfile.displayName,
+            gender: session.voiceProfile.gender,
+            locale: session.voiceProfile.locale,
+          accent: session.voiceProfile.accent,
+          realtimeVoiceId: session.voiceProfile.realtimeVoiceId,
+        }
+        : null,
+      scene: session.scene
+        ? {
+            id: session.scene.id,
+            title: session.scene.title,
+            category: session.scene.category,
+            difficulty: session.scene.difficulty,
+            description: session.scene.description,
+            characterName: session.scene.characterName,
+            characterRole: session.scene.characterRole,
+          }
+        : null,
+      customPractice: session.customPracticeConfig
+        ? {
+            id: session.customPracticeConfig.id,
+            displayTitle: session.customPracticeConfig.displayTitle,
+            displaySubtitle: session.customPracticeConfig.displaySubtitle,
+            contextType: session.customPracticeConfig.contextType,
+            difficulty: session.customPracticeConfig.difficulty,
+            topicSummary: session.customPracticeConfig.topicSummary,
+            missionText: session.customPracticeConfig.missionText,
+            estimatedMinutes: session.customPracticeConfig.estimatedMinutes,
+            aiPersona: {
+              displayName: session.customPracticeConfig.aiDisplayName,
+              role: session.customPracticeConfig.aiRole,
+              behaviorStyle: session.customPracticeConfig.aiBehaviorStyle,
+              genderPresentation: session.customPracticeConfig.aiGenderPresentation,
+              voiceTone: session.customPracticeConfig.aiVoiceTone,
+              accentPreference: session.customPracticeConfig.aiAccentPreference,
+            },
+          }
+        : null,
+      sourceSummary: {
+        title: source.title,
+        category: source.category,
+        difficulty: source.difficulty,
+        description: source.description,
+        characterName: source.characterName,
+        characterRole: source.characterRole,
       },
     },
     messages: session.messages.map(mapSessionMessage),

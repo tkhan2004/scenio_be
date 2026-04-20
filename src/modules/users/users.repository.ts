@@ -115,6 +115,7 @@ export async function findCompletedSessionsForProgress(userId: string, db: DbCli
     },
     select: {
       id: true,
+      sourceType: true,
       startedAt: true,
       endedAt: true,
       xpEarned: true,
@@ -126,6 +127,13 @@ export async function findCompletedSessionsForProgress(userId: string, db: DbCli
         select: {
           title: true,
           category: true,
+          difficulty: true,
+        },
+      },
+      customPracticeConfig: {
+        select: {
+          displayTitle: true,
+          contextType: true,
           difficulty: true,
         },
       },

@@ -96,6 +96,17 @@ export async function getHome(userId: string) {
     getRecommendedScenesForHome(userId, user.level, user.learningGoal),
   ]);
 
+  const inProgressTitle = inProgressSession
+    ? inProgressSession.sourceType === 'CUSTOM_PRACTICE'
+      ? inProgressSession.customPracticeConfig?.displayTitle ?? 'Custom Practice'
+      : inProgressSession.scene?.title ?? 'Unknown Scene'
+    : null;
+  const inProgressCharacter = inProgressSession
+    ? inProgressSession.sourceType === 'CUSTOM_PRACTICE'
+      ? inProgressSession.customPracticeConfig?.aiDisplayName ?? 'AI'
+      : inProgressSession.scene?.characterName ?? 'AI'
+    : null;
+
   return {
     user: {
       id: user.id,
@@ -110,8 +121,9 @@ export async function getHome(userId: string) {
     inProgressSession: inProgressSession
       ? {
           id: inProgressSession.id,
-          sceneTitle: inProgressSession.scene.title,
-          characterName: inProgressSession.scene.characterName,
+          sourceType: inProgressSession.sourceType,
+          sceneTitle: inProgressTitle,
+          characterName: inProgressCharacter,
           startedAt: inProgressSession.startedAt,
         }
       : null,

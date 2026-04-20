@@ -451,9 +451,16 @@ export async function getProgress(userId: string) {
     },
     sessionsHistory: sessions.slice(0, 10).map((session) => ({
       id: session.id,
-      sceneTitle: session.scene.title,
-      category: session.scene.category,
-      difficulty: session.scene.difficulty,
+      sourceType: session.sourceType,
+      sceneTitle: session.sourceType === 'CUSTOM_PRACTICE'
+        ? session.customPracticeConfig?.displayTitle ?? 'Custom Practice'
+        : session.scene?.title ?? 'Unknown Scene',
+      category: session.sourceType === 'CUSTOM_PRACTICE'
+        ? session.customPracticeConfig?.contextType ?? 'CUSTOM'
+        : session.scene?.category ?? 'DAILY',
+      difficulty: session.sourceType === 'CUSTOM_PRACTICE'
+        ? session.customPracticeConfig?.difficulty ?? user.level
+        : session.scene?.difficulty ?? user.level,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
       xpEarned: session.xpEarned,
