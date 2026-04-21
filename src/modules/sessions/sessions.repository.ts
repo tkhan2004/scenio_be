@@ -488,6 +488,54 @@ export async function findRecentMessagesForSession(sessionId: string, limit: num
 }
 
 /**
+ * Query Objective - findFinalMessagesForSession
+ * Summary: Lấy toàn bộ final transcript của session theo đúng thứ tự hội thoại để evaluator chấm điểm.
+ * Query Shape: findMany theo sessionId + isFinal, orderBy turnIndex asc rồi createdAt asc.
+ */
+export async function findFinalMessagesForSession(sessionId: string, db: DbClient = prisma) {
+  return db.message.findMany({
+    where: {
+      sessionId,
+      isFinal: true,
+    },
+    orderBy: [
+      { turnIndex: 'asc' },
+      { createdAt: 'asc' },
+    ],
+    select: messageSelect,
+  });
+}
+
+/**
+ * Query Objective - findMessageById
+ * Summary: Lấy lại một message cụ thể sau khi đã update feedback để trả về cho client.
+ * Query Shape: findUnique theo messageId.
+ */
+export async function findMessageById(messageId: string, db: DbClient = prisma) {
+  return db.message.findUnique({
+    where: { id: messageId },
+    select: messageSelect,
+  });
+}
+
+/**
+ * Query Objective - updateMessageFeedbackById
+ * Summary: Cập nhật feedback/evaluation fields cho một message user.
+ * Query Shape: update theo messageId với các cột feedback đã tách riêng.
+ */
+export async function updateMessageFeedbackById(
+  messageId: string,
+  data: Prisma.MessageUpdateInput,
+  db: DbClient = prisma,
+) {
+  return db.message.update({
+    where: { id: messageId },
+    data,
+    select: messageSelect,
+  });
+}
+
+/**
  * Query Objective - findNextTurnIndex
  * Summary: Tìm turnIndex tiếp theo của session để transcript được lưu đúng thứ tự.
  * Query Shape: aggregate max(turnIndex) theo sessionId.

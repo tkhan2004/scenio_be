@@ -1,4 +1,4 @@
-import { ConditionType, MissionType } from '@prisma/client';
+import { ConditionType, MissionType, Prisma } from '@prisma/client';
 import prisma from '../../config/database';
 import { AddXpInput, UpdateMeInput, UpdateOnboardingInput } from '../../schemas/users';
 import * as missionsService from '../missions/missions.service';
@@ -14,6 +14,21 @@ function buildUserProfile(user: NonNullable<Awaited<ReturnType<typeof usersRepo.
 type ProgressSessionRecord = Awaited<ReturnType<typeof usersRepo.findCompletedSessionsForProgress>>[number];
 type TodayMissionRecord = Awaited<ReturnType<typeof usersRepo.findTodayUserMissions>>[number];
 type BadgeRecord = Awaited<ReturnType<typeof usersRepo.findActiveBadgesWithEarnedStatus>>[number];
+type RewardGrantResult = {
+  totalXp: number;
+  streakDays: number;
+  missionsCompleted: Array<{
+    id: string;
+    missionId: string;
+    title: string;
+    description: string;
+    missionType: string;
+    target: number;
+    current: number;
+    xp: number;
+    completedAt: Date | null;
+  }>;
+};
 
 /**
  * Helper - getTodayDateString
@@ -180,6 +195,154 @@ function isBadgeEligible(
 }
 
 /**
+ * Function Objective - grantCompletedSessionRewards
+ * Summary: Thực hiện reward pipeline cho một session COMPLETED trong cùng transaction.
+ * Inputs: userId, sessionId, transaction client, và ngày hiện tại dạng YYYY-MM-DD.
+ * Behavior: Kiểm tra idempotent qua xpGrantedAt -> cập nhật user, missions, badges, và đánh dấu session đã grant XP.
+ * Returns: totalXp mới, streakDays mới, và missions vừa complete ở lần grant này.
+ */
+export async function grantCompletedSessionRewards(
+  userId: string,
+  sessionId: string,
+  tx: Prisma.TransactionClient,
+  today: string,
+): Promise<RewardGrantResult> {
+  const user = await usersRepo.findUserById(userId, tx);
+  if (!user) {
+    throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+  }
+
+  const session = await usersRepo.findSessionForXpGrant(userId, sessionId, tx);
+  if (!session) {
+    throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+  }
+
+  if (session.status !== 'COMPLETED') {
+    throw Object.assign(new Error('Chỉ có thể cộng XP cho session đã hoàn thành'), {
+      code: 'SESSION_NOT_COMPLETED',
+      status: 409,
+    });
+  }
+
+  if (session.xpGrantedAt) {
+    return {
+      totalXp: user.totalXp,
+      streakDays: user.streakDays,
+      missionsCompleted: [],
+    };
+  }
+
+  const sessionAverageScore = getSessionAverageScore(session);
+  const nextStreak = calculateNextStreak(user.streakDays, user.lastActiveDate, today);
+  const todayMissions = await usersRepo.findTodayUserMissions(userId, today, tx);
+
+  let missionBonusXp = 0;
+  const missionsCompleted: RewardGrantResult['missionsCompleted'] = [];
+
+  for (const mission of todayMissions) {
+    const nextValue = getNextMissionValue(mission, sessionAverageScore, nextStreak);
+    const shouldComplete = !mission.isCompleted && nextValue >= mission.mission.targetValue;
+    const shouldUpdate = nextValue !== mission.currentValue || shouldComplete;
+
+    if (!shouldUpdate) {
+      continue;
+    }
+
+    const completedAt = shouldComplete ? new Date() : mission.completedAt;
+    const updatedMission = await usersRepo.updateUserMissionById(
+      mission.id,
+      {
+        currentValue: nextValue,
+        isCompleted: mission.isCompleted || shouldComplete,
+        completedAt,
+      },
+      tx,
+    );
+
+    if (shouldComplete) {
+      missionBonusXp += updatedMission.mission.xpReward;
+      missionsCompleted.push({
+        id: updatedMission.id,
+        missionId: updatedMission.missionId,
+        title: updatedMission.mission.title,
+        description: updatedMission.mission.description,
+        missionType: updatedMission.mission.missionType,
+        target: updatedMission.mission.targetValue,
+        current: updatedMission.currentValue,
+        xp: updatedMission.mission.xpReward,
+        completedAt: updatedMission.completedAt,
+      });
+    }
+  }
+
+  const [completedSessions, completedSessionScores, savedVocabulary, badges] = await Promise.all([
+    usersRepo.countCompletedSessions(userId, tx),
+    usersRepo.findCompletedSessionScores(userId, tx),
+    usersRepo.countSavedVocabulary(userId, tx),
+    usersRepo.findActiveBadgesWithEarnedStatus(userId, tx),
+  ]);
+
+  const highestAverageScore = Math.max(
+    sessionAverageScore,
+    getHighestAverageScore(completedSessionScores),
+  );
+
+  let badgeBonusXp = 0;
+  for (const badge of badges) {
+    if (badge.userBadges.length > 0) {
+      continue;
+    }
+
+    const eligible = isBadgeEligible(badge, {
+      completedSessions,
+      streakDays: nextStreak,
+      highestAverageScore,
+      savedVocabulary,
+    });
+
+    if (!eligible) {
+      continue;
+    }
+
+    await usersRepo.createUserBadge(
+      {
+        userId,
+        badgeId: badge.id,
+        earnedAt: new Date(),
+      },
+      tx,
+    );
+    badgeBonusXp += badge.xpReward;
+  }
+
+  const updatedUser = await usersRepo.updateUserById(
+    userId,
+    {
+      totalXp: {
+        increment: session.xpEarned + missionBonusXp + badgeBonusXp,
+      },
+      streakDays: nextStreak,
+      lastActiveDate: dateFromDateString(today),
+    },
+    tx,
+  );
+
+  await usersRepo.updateSessionById(
+    session.id,
+    {
+      xpGrantedAt: new Date(),
+    },
+    tx,
+  );
+
+  return {
+    totalXp: updatedUser.totalXp,
+    streakDays: updatedUser.streakDays,
+    missionsCompleted,
+  };
+}
+
+/**
  * Function Objective - getMe
  * Summary: Lấy profile public đầy đủ của user hiện tại.
  * Inputs: userId từ access token đã verify.
@@ -273,151 +436,7 @@ export async function addXp(userId: string, input: AddXpInput) {
   const today = getTodayDateString();
   await missionsService.ensureTodayMissions(userId, today);
 
-  return prisma.$transaction(async (tx) => {
-    const user = await usersRepo.findUserById(userId, tx);
-    if (!user) {
-      throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
-    }
-
-    const session = await usersRepo.findSessionForXpGrant(userId, input.sessionId, tx);
-    if (!session) {
-      throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
-    }
-
-    if (session.status !== 'COMPLETED') {
-      throw Object.assign(new Error('Chỉ có thể cộng XP cho session đã hoàn thành'), {
-        code: 'SESSION_NOT_COMPLETED',
-        status: 409,
-      });
-    }
-
-    if (session.xpGrantedAt) {
-      return {
-        totalXp: user.totalXp,
-        streakDays: user.streakDays,
-        missionsCompleted: [],
-      };
-    }
-
-    const sessionAverageScore = getSessionAverageScore(session);
-    const nextStreak = calculateNextStreak(user.streakDays, user.lastActiveDate, today);
-    const todayMissions = await usersRepo.findTodayUserMissions(userId, today, tx);
-
-    let missionBonusXp = 0;
-    const missionsCompleted: Array<{
-      id: string;
-      missionId: string;
-      title: string;
-      description: string;
-      missionType: string;
-      target: number;
-      current: number;
-      xp: number;
-      completedAt: Date | null;
-    }> = [];
-
-    for (const mission of todayMissions) {
-      const nextValue = getNextMissionValue(mission, sessionAverageScore, nextStreak);
-      const shouldComplete = !mission.isCompleted && nextValue >= mission.mission.targetValue;
-      const shouldUpdate = nextValue !== mission.currentValue || shouldComplete;
-
-      if (!shouldUpdate) {
-        continue;
-      }
-
-      const completedAt = shouldComplete ? new Date() : mission.completedAt;
-      const updatedMission = await usersRepo.updateUserMissionById(
-        mission.id,
-        {
-          currentValue: nextValue,
-          isCompleted: mission.isCompleted || shouldComplete,
-          completedAt,
-        },
-        tx,
-      );
-
-      if (shouldComplete) {
-        missionBonusXp += updatedMission.mission.xpReward;
-        missionsCompleted.push({
-          id: updatedMission.id,
-          missionId: updatedMission.missionId,
-          title: updatedMission.mission.title,
-          description: updatedMission.mission.description,
-          missionType: updatedMission.mission.missionType,
-          target: updatedMission.mission.targetValue,
-          current: updatedMission.currentValue,
-          xp: updatedMission.mission.xpReward,
-          completedAt: updatedMission.completedAt,
-        });
-      }
-    }
-
-    const [completedSessions, completedSessionScores, savedVocabulary, badges] = await Promise.all([
-      usersRepo.countCompletedSessions(userId, tx),
-      usersRepo.findCompletedSessionScores(userId, tx),
-      usersRepo.countSavedVocabulary(userId, tx),
-      usersRepo.findActiveBadgesWithEarnedStatus(userId, tx),
-    ]);
-
-    const highestAverageScore = Math.max(
-      sessionAverageScore,
-      getHighestAverageScore(completedSessionScores),
-    );
-
-    let badgeBonusXp = 0;
-    for (const badge of badges) {
-      if (badge.userBadges.length > 0) {
-        continue;
-      }
-
-      const eligible = isBadgeEligible(badge, {
-        completedSessions,
-        streakDays: nextStreak,
-        highestAverageScore,
-        savedVocabulary,
-      });
-
-      if (!eligible) {
-        continue;
-      }
-
-      await usersRepo.createUserBadge(
-        {
-          userId,
-          badgeId: badge.id,
-          earnedAt: new Date(),
-        },
-        tx,
-      );
-      badgeBonusXp += badge.xpReward;
-    }
-
-    const updatedUser = await usersRepo.updateUserById(
-      userId,
-      {
-        totalXp: {
-          increment: session.xpEarned + missionBonusXp + badgeBonusXp,
-        },
-        streakDays: nextStreak,
-        lastActiveDate: dateFromDateString(today),
-      },
-      tx,
-    );
-
-    await usersRepo.updateSessionById(
-      session.id,
-      {
-        xpGrantedAt: new Date(),
-      },
-      tx,
-    );
-
-    return {
-      totalXp: updatedUser.totalXp,
-      streakDays: updatedUser.streakDays,
-      missionsCompleted,
-    };
-  });
+  return prisma.$transaction((tx) => grantCompletedSessionRewards(userId, input.sessionId, tx, today));
 }
 
 /**

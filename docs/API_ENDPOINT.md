@@ -48,6 +48,7 @@
 | 13b | POST | `/sessions/start-custom` | ✓ | Tạo custom practice session từ structured brief | ✅ Done |
 | 13a | POST | `/sessions/:id/realtime-token` | ✓ | Mint Realtime client secret cho session voice | ✅ Done |
 | 14 | POST | `/sessions/:id/message` | ✓ | Đồng bộ finalized transcript/text turn | ✅ Done |
+| 14a | POST | `/sessions/:id/complete` | ✓ | Kết thúc session và kích hoạt evaluator từ backend | ✅ Done |
 | 15 | POST | `/sessions/:id/hint` | ✓ | Dùng hint (tối đa 3 hint/phiên) | ✅ Done |
 | 16 | GET | `/sessions/:id/result` | ✓ | Lấy kết quả & Transcript chi tiết | ✅ Done |
 | 17 | PATCH | `/sessions/:id/abandon` | ✓ | Thoát phiên giữa chừng | ✅ Done |
@@ -578,12 +579,7 @@ Mint Realtime client secret cho WebRTC client của session voice.
   "isFinal": true,
   "audioStartMs": 1200,
   "audioEndMs": 3500,
-  "completeSession": {
-    "grammarScore": 86,
-    "vocabularyScore": 79,
-    "naturalnessScore": 82,
-    "xpEarned": 60
-  }
+  "completeSession": {}
 }
 ```
 
@@ -591,7 +587,16 @@ Mint Realtime client secret cho WebRTC client của session voice.
 - `source` hỗ trợ `USER_TEXT`, `USER_AUDIO`, `AI_TEXT`, `AI_AUDIO`.
 - Nếu `isFinal = false`, backend bỏ qua để tránh lưu partial transcript.
 - `providerEventId` được dùng để xử lý idempotent khi client retry.
-- Nếu có `completeSession`, backend sẽ đánh dấu session là `COMPLETED` và set score/xp ngay trong cùng flow.
+- Nếu có `completeSession`, backend xem đây là **legacy tín hiệu kết thúc session** để giữ tương thích với client cũ.
+- Từ thời điểm này, backend sẽ:
+  - chấm lại transcript bằng evaluator riêng
+  - tự tính `grammarScore`, `vocabularyScore`, `naturalnessScore`
+  - tự tính `xpEarned`
+  - tự populate feedback fields cho các `USER` messages
+  - tự grant XP / missions / badges trong cùng reward flow
+- Các score client truyền trong `completeSession` cũ được xem là legacy input, không còn là source of truth chính.
+
+> **Khuyến nghị hiện tại:** client mới nên dùng `POST /sessions/:id/message` chỉ để sync transcript, sau đó gọi `POST /sessions/:id/complete` để kết thúc session rõ ràng hơn.
 
 **Response 200**
 ```json
@@ -610,12 +615,92 @@ Mint Realtime client secret cho WebRTC client của session voice.
       "audioStartMs": 1200,
       "audioEndMs": 3500,
       "isFinal": true,
+      "hasError": false,
+      "errorType": null,
+      "originalPhrase": null,
+      "suggestion": null,
+      "explanation": null,
+      "isGood": true,
       "isHint": false
     },
     "session": {
       "id": "uuid",
       "status": "COMPLETED",
       "endedAt": "2026-04-15T08:40:00.000Z"
+    },
+    "evaluation": {
+      "mode": "AI",
+      "scores": {
+        "grammar": 85,
+        "vocabulary": 78,
+        "naturalness": 82
+      }
+    },
+    "rewards": {
+      "xpEarned": 60,
+      "totalXp": 380,
+      "streakDays": 8,
+      "missionsCompleted": [
+        {
+          "id": "uuid",
+          "missionId": "uuid",
+          "title": "Complete 1 scene today",
+          "description": "Finish one practice session.",
+          "missionType": "COMPLETE_SCENE",
+          "target": 1,
+          "current": 1,
+          "xp": 50,
+          "completedAt": "2026-04-15T08:40:00.000Z"
+        }
+      ]
+    }
+  }
+}
+```
+
+### 14a. POST `/sessions/:id/complete`
+Kích hoạt flow hoàn tất session từ backend sau khi transcript final đã được sync xong.
+
+**Request body**
+```json
+{}
+```
+
+**Quy tắc hiện tại**
+- Chỉ owner của session mới được gọi.
+- Chỉ session `ACTIVE` mới complete được.
+- Session phải có ít nhất 1 `USER` final message, nếu không backend trả `SESSION_TRANSCRIPT_INSUFFICIENT`.
+- Backend sẽ:
+  - đọc toàn bộ final transcript
+  - gọi evaluator để chấm `grammar`, `vocabulary`, `naturalness`
+  - ghi feedback vào từng `USER` message
+  - update session sang `COMPLETED`
+  - grant XP / missions / badges
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "session": {
+      "id": "uuid",
+      "status": "COMPLETED",
+      "endedAt": "2026-04-21T10:40:00.000Z"
+    },
+    "evaluation": {
+      "mode": "AI",
+      "scores": {
+        "grammar": 84,
+        "vocabulary": 80,
+        "naturalness": 82
+      }
+    },
+    "rewards": {
+      "xpEarned": 61,
+      "totalXp": 441,
+      "streakDays": 5,
+      "missionsCompleted": []
     }
   }
 }
@@ -664,6 +749,7 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
 - Chỉ owner của session mới đọc được kết quả.
 - Nếu session còn `ACTIVE` thì trả `SESSION_NOT_FINISHED`.
 - Session `COMPLETED` và `ABANDONED` đều đọc được.
+- Với session `COMPLETED` đi qua flow `POST /sessions/:id/complete` hoặc legacy `completeSession` trong `/message`, backend đã tự chấm score và lưu feedback cho từng `USER` message.
 
 **Response 200**
 ```json

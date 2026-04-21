@@ -76,30 +76,30 @@ Phần này là những gì backend **đã có nền thật** theo audit hiện 
 
 ### 3.2. Hoàn thiện endpoint message/session sync
 
-- [ ] Refactor `POST /api/sessions/:id/message` để phản ánh đúng vai trò cuối cùng
-- [ ] Tách rõ `transcript sync` và `evaluation trigger` nếu cần
-- [ ] Chặn việc client tự “tiêm” score tùy ý nếu đây không còn là hướng cuối cùng
+- [x] Refactor `POST /api/sessions/:id/message` để phản ánh đúng vai trò cuối cùng
+- [x] Tách rõ `transcript sync` và `evaluation trigger` nếu cần
+- [x] Chặn việc client tự “tiêm” score tùy ý nếu đây không còn là hướng cuối cùng
 - [ ] Lưu đủ metadata để debug session sau này
 - [ ] Bổ sung idempotency strategy rõ hơn cho realtime/provider events
 
 ### 3.3. Hoàn thiện evaluator backend
 
-- [ ] Tạo evaluator service riêng cho session
-- [ ] Tính `grammarScore` từ transcript / messages
-- [ ] Tính `vocabularyScore` từ transcript / messages
-- [ ] Tính `naturalnessScore` từ transcript / messages
+- [x] Tạo evaluator service riêng cho session
+- [x] Tính `grammarScore` từ transcript / messages
+- [x] Tính `vocabularyScore` từ transcript / messages
+- [x] Tính `naturalnessScore` từ transcript / messages
 - [ ] Chuẩn hóa cách convert evaluator output -> score 0..100
-- [ ] Tự tính `xpEarned` từ backend
+- [x] Tự tính `xpEarned` từ backend
 - [ ] Chốt rule `mission complete` từ backend
 
 ### 3.4. Hoàn thiện feedback per-turn
 
-- [ ] Populate `Message.hasError`
-- [ ] Populate `Message.errorType`
-- [ ] Populate `Message.originalPhrase`
-- [ ] Populate `Message.suggestion`
-- [ ] Populate `Message.explanation`
-- [ ] Populate `Message.isGood`
+- [x] Populate `Message.hasError`
+- [x] Populate `Message.errorType`
+- [x] Populate `Message.originalPhrase`
+- [x] Populate `Message.suggestion`
+- [x] Populate `Message.explanation`
+- [x] Populate `Message.isGood`
 - [ ] Chốt khi nào feedback hiển thị realtime, khi nào để cuối session
 
 ### 3.5. Verify phase
@@ -108,7 +108,7 @@ Phần này là những gì backend **đã có nền thật** theo audit hiện 
 - [ ] Test custom practice end-to-end
 - [ ] Test complete session mà không cần client gửi score tay
 - [ ] Test result screen lấy score/feedback đúng từ backend
-- [ ] Update `API_ENDPOINT.md` nếu contract thay đổi
+- [x] Update `API_ENDPOINT.md` nếu contract thay đổi
 - [ ] Update Postman nếu endpoint/body thay đổi
 
 ### Definition of Done
@@ -313,4 +313,3 @@ Nếu bắt đầu ngay từ bây giờ, task đầu tiên nên mở là:
 - missions
 - feedback
 - voice learning
-

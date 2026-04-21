@@ -3,6 +3,7 @@ import { auth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import {
   abandonSessionSchema,
+  completeSessionSchema,
   createRealtimeTokenSchema,
   getSessionResultSchema,
   levelTestSchema,
@@ -13,6 +14,7 @@ import {
 } from '../../schemas/sessions';
 import {
   abandonSessionController,
+  completeSessionController,
   createRealtimeTokenController,
   getSessionResultController,
   levelTestController,
@@ -53,6 +55,12 @@ router.post('/level-test', auth, validate(levelTestSchema), levelTestController)
  * @desc    Đồng bộ finalized transcript/text turn về backend session
  */
 router.post('/:id/message', auth, validate(sendSessionMessageSchema), sendSessionMessageController);
+
+/**
+ * @route   POST /api/sessions/:id/complete
+ * @desc    Kích hoạt flow hoàn tất session và chấm điểm transcript từ backend
+ */
+router.post('/:id/complete', auth, validate(completeSessionSchema), completeSessionController);
 
 /**
  * @route   POST /api/sessions/:id/hint

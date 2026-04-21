@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from 'express';
 import { fail, ok } from '../../utils/response';
 import {
   AbandonSessionParams,
+  CompleteSessionParams,
   CreateRealtimeTokenParams,
   GetSessionResultParams,
   LevelTestInput,
@@ -114,6 +115,27 @@ export const sendSessionMessageController = async (req: Request, res: Response, 
     const params = (req as any).validatedParams as SendSessionMessageParams;
     const input = (req as any).validatedBody as SendSessionMessageInput;
     const result = await sessionsService.sendSessionMessage(userId, params, input);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - completeSessionController
+ * Summary: Kích hoạt flow chấm điểm và hoàn tất session từ backend.
+ * Inputs: req, res, next.
+ * Behavior: Lấy userId + validatedParams -> gọi service -> trả result snapshot sau khi complete.
+ */
+export const completeSessionController = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user?.id as string | undefined;
+    if (!userId) {
+      return fail(res, 'Thiếu thông tin người dùng', 'UNAUTHORIZED', 401);
+    }
+
+    const params = (req as any).validatedParams as CompleteSessionParams;
+    const result = await sessionsService.completeSession(userId, params);
     ok(res, result);
   } catch (error) {
     next(error);

@@ -5,6 +5,7 @@ import prisma from '../../config/database';
 import { getLLMClient, provider } from '../../config/llm';
 import {
   AbandonSessionParams,
+  CompleteSessionParams,
   CreateRealtimeTokenParams,
   GetSessionResultParams,
   LevelTestHistoryItem,
@@ -16,7 +17,10 @@ import {
   SessionHintParams,
   StartSessionInput,
 } from '../../schemas/sessions';
+import * as missionsService from '../missions/missions.service';
+import * as usersService from '../users/users.service';
 import * as voicesService from '../voices/voices.service';
+import * as sessionsEvaluatorService from './sessions.evaluator.service';
 import * as sessionsRealtimeService from './sessions.realtime.service';
 import * as sessionsRepo from './sessions.repository';
 
@@ -44,6 +48,25 @@ const MESSAGE_SOURCE_MAP: Record<MessageSource, { role: MessageRole; modality: M
   USER_AUDIO: { role: MessageRole.USER, modality: MessageModality.AUDIO_TRANSCRIPT },
   AI_TEXT: { role: MessageRole.AI, modality: MessageModality.TEXT },
   AI_AUDIO: { role: MessageRole.AI, modality: MessageModality.AUDIO_TRANSCRIPT },
+};
+
+type SessionCompletionResponse = {
+  message?: ReturnType<typeof mapSessionMessage>;
+  session: {
+    id: string;
+    status: 'COMPLETED';
+    endedAt: Date | null;
+  };
+  evaluation: {
+    mode: sessionsEvaluatorService.SessionEvaluationResult['evaluationMode'];
+    scores: sessionsEvaluatorService.SessionEvaluationResult['scores'];
+  };
+  rewards: {
+    xpEarned: number;
+    totalXp: number;
+    streakDays: number;
+    missionsCompleted: Awaited<ReturnType<typeof usersService.grantCompletedSessionRewards>>['missionsCompleted'];
+  };
 };
 
 /**
@@ -429,6 +452,124 @@ function mapSessionMessage(message: sessionsRepo.SessionMessageRecord | sessions
     isGood: message.isGood,
     isHint: message.isHint,
     createdAt: message.createdAt,
+  };
+}
+
+/**
+ * Helper - getTodayDateString
+ * Summary: Trả về ngày hiện tại dạng YYYY-MM-DD để reward flow dùng chung với missions/users.
+ */
+function getTodayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Helper - assertSessionCanBeCompleted
+ * Summary: Kiểm tra session còn ACTIVE và có đủ transcript tối thiểu để chấm điểm.
+ * Notes: Giữ rule completion ở backend để client không hoàn tất session rỗng.
+ */
+function assertSessionCanBeCompleted(
+  session: sessionsRepo.SessionContextRecord,
+  finalMessages: sessionsRepo.SessionMessageRecord[],
+) {
+  if (session.status !== 'ACTIVE') {
+    throw Object.assign(new Error('Chỉ có thể hoàn tất session đang ACTIVE'), {
+      code: 'SESSION_NOT_ACTIVE',
+      status: 409,
+    });
+  }
+
+  const finalUserMessages = finalMessages.filter((message) => message.role === MessageRole.USER && !message.isHint);
+  if (finalUserMessages.length === 0) {
+    throw Object.assign(new Error('Session chưa có đủ transcript của người học để chấm điểm'), {
+      code: 'SESSION_TRANSCRIPT_INSUFFICIENT',
+      status: 409,
+    });
+  }
+}
+
+/**
+ * Helper - completeSessionWithEvaluation
+ * Summary: Chốt transcript final, chấm điểm bằng evaluator, rồi grant rewards trong cùng flow backend.
+ * Notes: Dùng chung cho endpoint /message legacy và endpoint /complete mới.
+ */
+async function completeSessionWithEvaluation(
+  userId: string,
+  session: sessionsRepo.SessionContextRecord,
+  responseMessage?: sessionsRepo.SessionMessageRecord,
+): Promise<SessionCompletionResponse> {
+  const finalMessages = await sessionsRepo.findFinalMessagesForSession(session.id);
+  assertSessionCanBeCompleted(session, finalMessages);
+
+  const evaluation = await sessionsEvaluatorService.evaluateCompletedSession({
+    session,
+    messages: finalMessages,
+  });
+  const today = getTodayDateString();
+
+  await missionsService.ensureTodayMissions(userId, today);
+
+  const completion = await prisma.$transaction(async (tx) => {
+    let updatedResponseMessage = responseMessage ?? null;
+
+    for (const feedback of evaluation.feedback) {
+      const updatedMessage = await sessionsRepo.updateMessageFeedbackById(
+        feedback.messageId,
+        {
+          hasError: feedback.hasError,
+          errorType: feedback.errorType,
+          originalPhrase: feedback.originalPhrase,
+          suggestion: feedback.suggestion,
+          explanation: feedback.explanation,
+          isGood: feedback.isGood,
+        },
+        tx,
+      );
+
+      if (updatedResponseMessage && updatedMessage.id === updatedResponseMessage.id) {
+        updatedResponseMessage = updatedMessage;
+      }
+    }
+
+    const updatedSession = await sessionsRepo.updateSessionById(
+      session.id,
+      {
+        status: 'COMPLETED',
+        endedAt: new Date(),
+        grammarScore: evaluation.scores.grammar,
+        vocabularyScore: evaluation.scores.vocabulary,
+        naturalnessScore: evaluation.scores.naturalness,
+        xpEarned: evaluation.xpEarned,
+      },
+      tx,
+    );
+
+    const rewards = await usersService.grantCompletedSessionRewards(userId, session.id, tx, today);
+
+    return {
+      message: updatedResponseMessage,
+      session: updatedSession,
+      rewards,
+    };
+  });
+
+  return {
+    ...(completion.message ? { message: mapSessionMessage(completion.message) } : {}),
+    session: {
+      id: session.id,
+      status: 'COMPLETED',
+      endedAt: completion.session.endedAt,
+    },
+    evaluation: {
+      mode: evaluation.evaluationMode,
+      scores: evaluation.scores,
+    },
+    rewards: {
+      xpEarned: evaluation.xpEarned,
+      totalXp: completion.rewards.totalXp,
+      streakDays: completion.rewards.streakDays,
+      missionsCompleted: completion.rewards.missionsCompleted,
+    },
   };
 }
 
@@ -865,13 +1006,6 @@ export async function sendSessionMessage(
     throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
   }
 
-  if (session.status !== 'ACTIVE') {
-    throw Object.assign(new Error('Không thể thêm message vào session không còn ACTIVE'), {
-      code: 'SESSION_NOT_ACTIVE',
-      status: 409,
-    });
-  }
-
   if (input.providerEventId) {
     const existing = await sessionsRepo.findMessageByProviderEventId(session.id, input.providerEventId);
     if (existing) {
@@ -885,6 +1019,13 @@ export async function sendSessionMessage(
         },
       };
     }
+  }
+
+  if (session.status !== 'ACTIVE') {
+    throw Object.assign(new Error('Không thể thêm message vào session không còn ACTIVE'), {
+      code: 'SESSION_NOT_ACTIVE',
+      status: 409,
+    });
   }
 
   if (!input.isFinal) {
@@ -902,57 +1043,47 @@ export async function sendSessionMessage(
   const sourceConfig = MESSAGE_SOURCE_MAP[input.source];
   const turnIndex = input.turnIndex ?? await sessionsRepo.findNextTurnIndex(session.id);
 
-  const result = await prisma.$transaction(async (tx) => {
-    const message = await sessionsRepo.createMessage(
-      {
-        sessionId: session.id,
-        role: sourceConfig.role,
-        content: input.content,
-        turnIndex,
-        providerEventId: input.providerEventId ?? null,
-        modality: sourceConfig.modality,
-        audioStartMs: input.audioStartMs ?? null,
-        audioEndMs: input.audioEndMs ?? null,
-        isFinal: true,
-      },
-      tx,
-    );
-
-    if (!input.completeSession) {
-      return {
-        message,
-        session: null,
-      };
-    }
-
-    const updatedSession = await sessionsRepo.updateSessionById(
-      session.id,
-      {
-        status: 'COMPLETED',
-        endedAt: new Date(),
-        grammarScore: input.completeSession.grammarScore,
-        vocabularyScore: input.completeSession.vocabularyScore,
-        naturalnessScore: input.completeSession.naturalnessScore,
-        xpEarned: input.completeSession.xpEarned ?? 0,
-      },
-      tx,
-    );
-
-    return {
-      message,
-      session: updatedSession,
-    };
+  const storedMessage = await sessionsRepo.createMessage({
+    sessionId: session.id,
+    role: sourceConfig.role,
+    content: input.content,
+    turnIndex,
+    providerEventId: input.providerEventId ?? null,
+    modality: sourceConfig.modality,
+    audioStartMs: input.audioStartMs ?? null,
+    audioEndMs: input.audioEndMs ?? null,
+    isFinal: true,
   });
 
   return {
     stored: true,
-    message: mapSessionMessage(result.message),
-    session: {
-      id: session.id,
-      status: result.session?.status ?? session.status,
-      endedAt: result.session?.endedAt ?? session.endedAt,
-    },
+    ...(input.completeSession
+      ? await completeSessionWithEvaluation(userId, session, storedMessage)
+      : {
+          message: mapSessionMessage(storedMessage),
+          session: {
+            id: session.id,
+            status: session.status,
+            endedAt: session.endedAt,
+          },
+        }),
   };
+}
+
+/**
+ * Function Objective - completeSession
+ * Summary: Tách flow hoàn tất session ra endpoint riêng để backend chấm điểm rõ ràng hơn.
+ * Inputs: userId và session params đã validate.
+ * Behavior: Kiểm tra ownership -> load session context -> chạy evaluator + reward flow trên transcript final.
+ * Returns: Session đã complete, score, và rewards do backend tính.
+ */
+export async function completeSession(userId: string, params: CompleteSessionParams) {
+  const session = await sessionsRepo.findOwnedSessionContext(userId, params.id);
+  if (!session) {
+    throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+  }
+
+  return completeSessionWithEvaluation(userId, session);
 }
 
 /**
