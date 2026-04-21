@@ -72,7 +72,23 @@
 | 28 | GET | `/voices/:id` | ✓ | Chi tiết một voice profile active | ✅ Done |
 | 29 | POST | `/voices/preview` | ✓ | Sinh audio preview cho voice profile | ✅ Done |
 | **ADMIN** |
+| 30a | GET | `/admin/overview` | ✓ | KPI và chart data cho admin dashboard | ✅ Done |
 | 30 | GET | `/admin/users` | ✓ | Danh sách learner cho admin dashboard | ✅ Done |
+| 30g | GET | `/admin/users/:id` | ✓ | Chi tiết learner cho admin drawer | ✅ Done |
+| 30h | GET | `/admin/users/:id/sessions` | ✓ | Lịch sử sessions của learner | ✅ Done |
+| 30b | GET | `/admin/scenes` | ✓ | Danh sách scene cho admin scene table | ✅ Done |
+| 30c | GET | `/admin/scenes/:id` | ✓ | Chi tiết scene cho admin edit drawer | ✅ Done |
+| 30d | POST | `/admin/scenes` | ✓ | Tạo scene mới từ admin form | ✅ Done |
+| 30e | PATCH | `/admin/scenes/:id` | ✓ | Cập nhật scene hiện có | ✅ Done |
+| 30f | PATCH | `/admin/scenes/:id/toggle` | ✓ | Bật/tắt trạng thái active của scene | ✅ Done |
+| 30i | GET | `/admin/missions` | ✓ | Danh sách mission template cho admin | ✅ Done |
+| 30j | POST | `/admin/missions` | ✓ | Tạo mission template mới | ✅ Done |
+| 30k | PATCH | `/admin/missions/:id` | ✓ | Cập nhật mission template hiện có | ✅ Done |
+| 30l | PATCH | `/admin/missions/:id/toggle` | ✓ | Bật/tắt trạng thái active của mission | ✅ Done |
+| 30m | GET | `/admin/badges` | ✓ | Danh sách badge cho admin | ✅ Done |
+| 30n | PATCH | `/admin/badges/:id/toggle` | ✓ | Bật/tắt trạng thái active của badge | ✅ Done |
+| 30o | GET | `/admin/voices` | ✓ | Voice catalog cho admin | ✅ Done |
+| 30p | PATCH | `/admin/voices/:id/toggle` | ✓ | Bật/tắt trạng thái active của voice | ✅ Done |
 
 ---
 
@@ -1049,6 +1065,52 @@ Sinh audio preview cho voice profile được chọn.
 - Nếu ElevenLabs không khả dụng, backend fallback sang OpenAI TTS bằng `realtimeVoiceId`.
 - Response là binary audio stream.
 
+### 30a. GET `/admin/overview`
+Lấy dữ liệu tổng quan cho admin dashboard, gồm KPI cards, level distribution, recent learners, và sessions by day.
+
+**Quy tắc hiện tại**
+- Chỉ user `isAdmin = true` mới gọi được.
+- `activeToday` được tính theo `users.lastActiveDate` trong ngày hiện tại.
+- `totalCustomPracticeSessions` đếm các session có `sourceType = CUSTOM_PRACTICE`.
+- `totalVocabularySaved` đếm dictionary aggregate từ bảng `user_vocabulary`.
+- `sessionsByDay` hiện bucket 7 ngày gần nhất theo `startedAt`.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "summary": {
+      "totalLearners": 128,
+      "activeToday": 34,
+      "totalScenes": 18,
+      "totalCustomPracticeSessions": 42,
+      "totalVocabularySaved": 964
+    },
+    "levelDistribution": [
+      { "level": "A1", "count": 18 },
+      { "level": "A2", "count": 57 },
+      { "level": "B1", "count": 39 },
+      { "level": "B2", "count": 14 }
+    ],
+    "recentLearners": [
+      {
+        "id": "uuid",
+        "displayName": "Nguyen Khang",
+        "email": "khang@example.com",
+        "level": "A2",
+        "createdAt": "2026-04-20T08:00:00.000Z"
+      }
+    ],
+    "sessionsByDay": [
+      { "date": "2026-04-14", "count": 12 },
+      { "date": "2026-04-15", "count": 17 }
+    ]
+  }
+}
+```
+
 ### 30. GET `/admin/users`
 Lấy danh sách learner cho admin dashboard. Endpoint này chỉ cho phép user có `isAdmin = true`.
 
@@ -1115,7 +1177,525 @@ Lấy danh sách learner cho admin dashboard. Endpoint này chỉ cho phép user
   "status": 403,
   "error": {
     "code": "FORBIDDEN",
-    "message": "Bạn không có quyền truy cập tài nguyên này"
+    "message": "Chỉ admin mới có quyền truy cập"
+  }
+}
+```
+
+### 30b. GET `/admin/scenes`
+Lấy danh sách scene cho admin scene table, bao gồm cả scene inactive.
+
+**Query params**
+```json
+{
+  "search": "airport",
+  "category": "TRAVEL",
+  "difficulty": "A2",
+  "isActive": true,
+  "page": 1,
+  "limit": 20
+}
+```
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "summary": {
+      "totalScenes": 18,
+      "activeScenes": 16,
+      "inactiveScenes": 2,
+      "returnedScenes": 5,
+      "search": "airport",
+      "category": "TRAVEL",
+      "difficulty": "A2",
+      "isActive": true
+    },
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 5,
+      "totalPages": 1,
+      "hasNext": false,
+      "hasPrevious": false
+    },
+    "scenes": [
+      {
+        "id": "uuid",
+        "title": "Airport Check-in",
+        "category": "TRAVEL",
+        "difficulty": "A2",
+        "estimatedMinutes": 7,
+        "characterName": "David",
+        "characterRole": "Check-in Staff",
+        "isActive": true,
+        "updatedAt": "2026-04-21T08:00:00.000Z",
+        "sessionsCount": 24
+      }
+    ]
+  }
+}
+```
+
+### 30c. GET `/admin/scenes/:id`
+Lấy chi tiết một scene cho admin edit drawer.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "scene": {
+      "id": "uuid",
+      "title": "Airport Check-in",
+      "category": "TRAVEL",
+      "difficulty": "A2",
+      "description": "Check in luggage and ask about gate, boarding time, and seat.",
+      "missionText": "Complete the airport check-in conversation naturally.",
+      "estimatedMinutes": 7,
+      "characterName": "David",
+      "characterRole": "Check-in Staff",
+      "systemPrompt": "You are a polite airport check-in staff helping a passenger check in.",
+      "isActive": true,
+      "createdAt": "2026-04-01T08:00:00.000Z",
+      "updatedAt": "2026-04-21T08:00:00.000Z",
+      "sessionsCount": 24
+    },
+    "vocabulary": [
+      {
+        "id": "uuid",
+        "word": "boarding pass",
+        "definition": "thẻ lên máy bay",
+        "example": "Can I see your boarding pass, please?",
+        "sortOrder": 1
+      }
+    ],
+    "voicePreset": {
+      "defaultVoiceId": "uuid",
+      "defaultMaleVoiceId": null,
+      "defaultFemaleVoiceId": null
+    }
+  }
+}
+```
+
+### 30d. POST `/admin/scenes`
+Tạo scene mới từ admin form.
+
+**Body**
+```json
+{
+  "title": "Coffee Shop Order",
+  "category": "DAILY",
+  "difficulty": "A1",
+  "description": "Order coffee and ask for recommendations.",
+  "missionText": "Finish a simple cafe ordering conversation.",
+  "estimatedMinutes": 5,
+  "characterName": "Mia",
+  "characterRole": "Barista",
+  "systemPrompt": "You are a friendly barista helping a customer order coffee.",
+  "isActive": true
+}
+```
+
+**Quy tắc hiện tại**
+- Nếu admin để trống `description`, `missionText`, `characterName`, `characterRole`, hoặc `systemPrompt`, backend sẽ tự sinh fallback để scene không bị unusable.
+- Backend tự tạo `scene_voice_preset` đi kèm; nếu hệ thống có voice active thì gắn `defaultVoiceId` đầu tiên làm preset mặc định.
+
+### 30e. PATCH `/admin/scenes/:id`
+Cập nhật scene hiện có từ admin form.
+
+**Body**
+```json
+{
+  "title": "Coffee Shop Order",
+  "missionText": "Finish a natural cafe ordering conversation.",
+  "estimatedMinutes": 6,
+  "isActive": true
+}
+```
+
+### 30f. PATCH `/admin/scenes/:id/toggle`
+Bật hoặc tắt trạng thái active của scene.
+
+**Body**
+```json
+{
+  "isActive": false
+}
+```
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "scene": {
+      "id": "uuid",
+      "isActive": false,
+      "updatedAt": "2026-04-21T08:30:00.000Z"
+    }
+  }
+}
+```
+
+### 30g. GET `/admin/users/:id`
+Lấy chi tiết learner cho admin drawer.
+
+**Quy tắc hiện tại**
+- Chỉ user `isAdmin = true` mới gọi được.
+- Chỉ trả về learner `isAdmin = false`.
+- Response tách thành `user` và `summary` để FE dễ render theo tab/profile card.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "user": {
+      "id": "uuid",
+      "email": "learner@scenio.dev",
+      "displayName": "Scenio Learner",
+      "avatarUrl": null,
+      "level": "A2",
+      "learningGoal": "TRAVEL",
+      "studyFrequency": "REGULAR",
+      "selfAssessment": "GRAMMAR",
+      "needsLevelTest": false,
+      "levelTestedAt": "2026-04-02T09:00:00.000Z",
+      "totalXp": 320,
+      "streakDays": 7,
+      "lastActiveDate": "2026-04-19T00:00:00.000Z",
+      "createdAt": "2026-04-01T08:00:00.000Z"
+    },
+    "summary": {
+      "completedSessions": 5,
+      "abandonedSessions": 1,
+      "customPracticeSessions": 2,
+      "savedVocabularyCount": 18,
+      "earnedBadgesCount": 3
+    }
+  }
+}
+```
+
+### 30h. GET `/admin/users/:id/sessions`
+Lấy lịch sử session của learner cho tab `Sessions` trong admin drawer.
+
+**Query**
+- `page`: số trang, mặc định `1`
+- `limit`: số item mỗi trang, mặc định `20`, tối đa `100`
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "total": 2,
+    "page": 1,
+    "limit": 20,
+    "totalPages": 1,
+    "sessions": [
+      {
+        "id": "uuid",
+        "sourceType": "CURATED_SCENE",
+        "title": "Airport Check-in",
+        "status": "COMPLETED",
+        "modality": "VOICE",
+        "grammarScore": 85,
+        "vocabularyScore": 78,
+        "naturalnessScore": 82,
+        "xpEarned": 60,
+        "hintCount": 1,
+        "startedAt": "2026-04-18T08:00:00.000Z",
+        "endedAt": "2026-04-18T08:12:00.000Z"
+      },
+      {
+        "id": "uuid",
+        "sourceType": "CUSTOM_PRACTICE",
+        "title": "Frontend Interview Practice",
+        "status": "COMPLETED",
+        "modality": "TEXT",
+        "grammarScore": 80,
+        "vocabularyScore": 75,
+        "naturalnessScore": 79,
+        "xpEarned": 55,
+        "hintCount": 0,
+        "startedAt": "2026-04-19T10:00:00.000Z",
+        "endedAt": "2026-04-19T10:14:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+### 30i. GET `/admin/missions`
+Lấy danh sách mission template cho admin mission table.
+
+**Quy tắc hiện tại**
+- Trả về toàn bộ mission template trong hệ thống.
+- Sắp xếp ưu tiên mission `isActive = true`, rồi theo `xpReward`, sau đó theo `title`.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "missions": [
+      {
+        "id": "uuid",
+        "title": "Complete 1 scene today",
+        "description": "Finish one practice session.",
+        "missionType": "COMPLETE_SCENE",
+        "targetValue": 1,
+        "xpReward": 50,
+        "isActive": true
+      },
+      {
+        "id": "uuid",
+        "title": "Maintain a 3-day streak",
+        "description": "Stay active for three consecutive days.",
+        "missionType": "MAINTAIN_STREAK",
+        "targetValue": 3,
+        "xpReward": 40,
+        "isActive": true
+      }
+    ]
+  }
+}
+```
+
+### 30j. POST `/admin/missions`
+Tạo mission template mới.
+
+**Body**
+```json
+{
+  "title": "Achieve score 80",
+  "description": "Reach at least 80 points in one session.",
+  "missionType": "ACHIEVE_SCORE",
+  "targetValue": 80,
+  "xpReward": 60,
+  "isActive": true
+}
+```
+
+**Response 201**
+```json
+{
+  "success": true,
+  "status": 201,
+  "data": {
+    "mission": {
+      "id": "uuid",
+      "title": "Achieve score 80",
+      "description": "Reach at least 80 points in one session.",
+      "missionType": "ACHIEVE_SCORE",
+      "targetValue": 80,
+      "xpReward": 60,
+      "isActive": true
+    }
+  }
+}
+```
+
+### 30k. PATCH `/admin/missions/:id`
+Cập nhật mission template hiện có.
+
+**Body**
+```json
+{
+  "title": "Achieve score 85",
+  "targetValue": 85,
+  "xpReward": 70,
+  "isActive": true
+}
+```
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "mission": {
+      "id": "uuid",
+      "title": "Achieve score 85",
+      "description": "Reach at least 80 points in one session.",
+      "missionType": "ACHIEVE_SCORE",
+      "targetValue": 85,
+      "xpReward": 70,
+      "isActive": true
+    }
+  }
+}
+```
+
+### 30l. PATCH `/admin/missions/:id/toggle`
+Bật hoặc tắt trạng thái active của mission template.
+
+**Body**
+```json
+{
+  "isActive": false
+}
+```
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "mission": {
+      "id": "uuid",
+      "isActive": false
+    }
+  }
+}
+```
+
+### 30m. GET `/admin/badges`
+Lấy danh sách badge cho admin badge table.
+
+**Quy tắc hiện tại**
+- Trả về toàn bộ badge trong hệ thống.
+- Có thêm `earnedCount` để admin nhìn nhanh badge nào đang được learner nhận nhiều.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "badges": [
+      {
+        "id": "uuid",
+        "title": "First Session",
+        "description": "Complete your first practice session.",
+        "iconKey": "first_session",
+        "conditionType": "FIRST_SESSION",
+        "conditionValue": 1,
+        "xpReward": 30,
+        "isActive": true,
+        "earnedCount": 12
+      },
+      {
+        "id": "uuid",
+        "title": "Vocabulary Builder",
+        "description": "Save 20 words to your dictionary.",
+        "iconKey": "vocab_builder",
+        "conditionType": "VOCAB_SAVED",
+        "conditionValue": 20,
+        "xpReward": 60,
+        "isActive": true,
+        "earnedCount": 8
+      }
+    ]
+  }
+}
+```
+
+### 30n. PATCH `/admin/badges/:id/toggle`
+Bật hoặc tắt trạng thái active của badge.
+
+**Body**
+```json
+{
+  "isActive": false
+}
+```
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "badge": {
+      "id": "uuid",
+      "isActive": false
+    }
+  }
+}
+```
+
+### 30o. GET `/admin/voices`
+Lấy voice catalog cho admin voice table.
+
+**Quy tắc hiện tại**
+- Trả về cả voice active và inactive.
+- FE có thể dùng trực tiếp cho bảng voice mà không cần gọi thêm detail API.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "voices": [
+      {
+        "id": "uuid",
+        "displayName": "Emma HR Warm",
+        "description": "Professional, warm, confident",
+        "gender": "FEMALE",
+        "locale": "en-US",
+        "accent": "American",
+        "provider": "ELEVENLABS",
+        "realtimeProvider": "OPENAI",
+        "latencyTier": "LOW",
+        "styleTags": ["warm", "professional"],
+        "sampleText": "Hello, I am your speaking partner today.",
+        "sampleUrl": null,
+        "isActive": true
+      },
+      {
+        "id": "uuid",
+        "displayName": "David Airport Calm",
+        "description": "Calm, helpful, polite",
+        "gender": "MALE",
+        "locale": "en-GB",
+        "accent": "British",
+        "provider": "ELEVENLABS",
+        "realtimeProvider": "OPENAI",
+        "latencyTier": "LOW",
+        "styleTags": ["calm", "helpful"],
+        "sampleText": "Please place your luggage on the scale.",
+        "sampleUrl": null,
+        "isActive": true
+      }
+    ]
+  }
+}
+```
+
+### 30p. PATCH `/admin/voices/:id/toggle`
+Bật hoặc tắt trạng thái active của voice profile.
+
+**Body**
+```json
+{
+  "isActive": false
+}
+```
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "voice": {
+      "id": "uuid",
+      "isActive": false
+    }
   }
 }
 ```
