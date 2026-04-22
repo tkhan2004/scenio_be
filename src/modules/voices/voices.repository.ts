@@ -138,6 +138,21 @@ export async function findAnyActiveVoice() {
 }
 
 /**
+ * Query Objective - findAllActiveVoices
+ * Summary: Lấy toàn bộ active voices để chạy rule-based selection cho custom practice.
+ * Query Shape: findMany theo isActive, order displayName asc.
+ */
+export async function findAllActiveVoices() {
+  return prisma.voiceProfile.findMany({
+    where: {
+      isActive: true,
+    },
+    orderBy: [{ displayName: 'asc' }],
+    select: voiceProfileSelect,
+  });
+}
+
+/**
  * Query Objective - findSceneById
  * Summary: Kiểm tra scene active tồn tại trước khi trả voice preset.
  * Query Shape: findFirst theo scene id + isActive.

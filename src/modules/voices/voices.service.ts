@@ -9,6 +9,36 @@ import * as voicesRepo from './voices.repository';
 
 type VoiceProfileRecord = voicesRepo.VoiceProfileRecord;
 
+type ScenePresetSlot = 'default' | 'female' | 'male' | null;
+
+export type VoiceSelectionPolicy = {
+  source:
+    | 'EXPLICIT_SELECTION'
+    | 'SCENE_DEFAULT_PRESET'
+    | 'SCENE_FEMALE_PRESET'
+    | 'SCENE_MALE_PRESET'
+    | 'CUSTOM_RULE_BASED'
+    | 'GLOBAL_FALLBACK';
+  usedFallback: boolean;
+  scenePresetSlot: ScenePresetSlot;
+  requested: {
+    voiceProfileId: string | null;
+    gender: VoiceGender | null;
+    accentPreference: string | null;
+    voiceTone: string | null;
+  };
+  matched: {
+    gender: VoiceGender | null;
+    accent: string | null;
+    tone: string | null;
+  };
+};
+
+export type ResolvedVoiceSelection = {
+  voice: VoiceProfileRecord;
+  policy: VoiceSelectionPolicy;
+};
+
 function mapVoice(voice: VoiceProfileRecord) {
   return {
     id: voice.id,
@@ -39,11 +69,121 @@ function uniqueVoices(voices: Array<VoiceProfileRecord | null | undefined>) {
 }
 
 /**
- * Helper - getPreferredQuickPick
- * Summary: Chọn default voice cho scene khi user chưa explicit chọn một profile.
+ * Helper - normalizeLookupToken
+ * Summary: Chuẩn hóa token text để so khớp accent/style linh hoạt hơn.
  */
-function getPreferredQuickPick(preset: voicesRepo.SceneVoicePresetRecord | null) {
-  return preset?.defaultVoice || preset?.defaultFemaleVoice || preset?.defaultMaleVoice || null;
+function normalizeLookupToken(value: string | null | undefined) {
+  return (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function getAccentAliases(value: string) {
+  const normalized = normalizeLookupToken(value);
+  const aliases = new Set([normalized]);
+
+  if (['us', 'usa', 'american', 'en us'].includes(normalized)) {
+    aliases.add('american');
+    aliases.add('us');
+    aliases.add('en us');
+  }
+
+  if (['uk', 'british', 'en gb'].includes(normalized)) {
+    aliases.add('british');
+    aliases.add('uk');
+    aliases.add('en gb');
+  }
+
+  if (['au', 'australian', 'en au'].includes(normalized)) {
+    aliases.add('australian');
+    aliases.add('au');
+    aliases.add('en au');
+  }
+
+  return Array.from(aliases);
+}
+
+function matchesAccent(voice: VoiceProfileRecord, accentPreference?: string | null) {
+  const requested = normalizeLookupToken(accentPreference);
+  if (!requested) return false;
+
+  const haystacks = [
+    normalizeLookupToken(voice.accent),
+    normalizeLookupToken(voice.locale),
+    normalizeLookupToken(voice.displayName),
+    normalizeLookupToken(voice.description),
+  ].filter(Boolean);
+
+  return getAccentAliases(requested).some((alias) => haystacks.some((haystack) => haystack.includes(alias)));
+}
+
+function matchesTone(voice: VoiceProfileRecord, voiceTone?: string | null) {
+  const requested = normalizeLookupToken(voiceTone);
+  if (!requested) return false;
+
+  const styleTags = (voice.styleTags || []).map(normalizeLookupToken);
+  if (styleTags.some((tag) => tag.includes(requested) || requested.includes(tag))) {
+    return true;
+  }
+
+  const searchable = [
+    normalizeLookupToken(voice.displayName),
+    normalizeLookupToken(voice.description),
+  ].filter(Boolean);
+
+  return searchable.some((field) => field.includes(requested));
+}
+
+/**
+ * Helper - getScenePresetSelection
+ * Summary: Trả về quick-pick voice và slot preset tương ứng của scene.
+ */
+function getScenePresetSelection(preset: voicesRepo.SceneVoicePresetRecord | null) {
+  if (preset?.defaultVoice) {
+    return { voice: preset.defaultVoice, slot: 'default' as const };
+  }
+
+  if (preset?.defaultFemaleVoice) {
+    return { voice: preset.defaultFemaleVoice, slot: 'female' as const };
+  }
+
+  if (preset?.defaultMaleVoice) {
+    return { voice: preset.defaultMaleVoice, slot: 'male' as const };
+  }
+
+  return { voice: null, slot: null };
+}
+
+function buildSelectionPolicy(input: {
+  source: VoiceSelectionPolicy['source'];
+  usedFallback: boolean;
+  scenePresetSlot?: ScenePresetSlot;
+  requestedVoiceProfileId?: string | null;
+  requestedGender?: VoiceGender | null;
+  requestedAccentPreference?: string | null;
+  requestedVoiceTone?: string | null;
+  matchedGender?: VoiceGender | null;
+  matchedAccent?: string | null;
+  matchedTone?: string | null;
+}): VoiceSelectionPolicy {
+  return {
+    source: input.source,
+    usedFallback: input.usedFallback,
+    scenePresetSlot: input.scenePresetSlot ?? null,
+    requested: {
+      voiceProfileId: input.requestedVoiceProfileId ?? null,
+      gender: input.requestedGender ?? null,
+      accentPreference: input.requestedAccentPreference?.trim() || null,
+      voiceTone: input.requestedVoiceTone?.trim() || null,
+    },
+    matched: {
+      gender: input.matchedGender ?? null,
+      accent: input.matchedAccent ?? null,
+      tone: input.matchedTone ?? null,
+    },
+  };
 }
 
 /**
@@ -175,15 +315,56 @@ export async function resolveVoiceSelection(sceneId: string, voiceProfileId?: st
     });
   }
 
-  const selectedVoice = explicitVoice || getPreferredQuickPick(preset);
-  if (!selectedVoice) {
-    throw Object.assign(new Error('Scene hiện chưa có voice preset khả dụng'), {
-      code: 'VOICE_PRESET_NOT_FOUND',
-      status: 409,
-    });
+  if (explicitVoice) {
+    return {
+      voice: explicitVoice,
+      policy: buildSelectionPolicy({
+        source: 'EXPLICIT_SELECTION',
+        usedFallback: false,
+        requestedVoiceProfileId: voiceProfileId,
+        matchedGender: explicitVoice.gender,
+        matchedAccent: explicitVoice.accent,
+      }),
+    } satisfies ResolvedVoiceSelection;
   }
 
-  return selectedVoice;
+  const presetSelection = getScenePresetSelection(preset);
+  if (presetSelection.voice) {
+    return {
+      voice: presetSelection.voice,
+      policy: buildSelectionPolicy({
+        source:
+          presetSelection.slot === 'default'
+            ? 'SCENE_DEFAULT_PRESET'
+            : presetSelection.slot === 'female'
+              ? 'SCENE_FEMALE_PRESET'
+              : 'SCENE_MALE_PRESET',
+        usedFallback: false,
+        scenePresetSlot: presetSelection.slot,
+        matchedGender: presetSelection.voice.gender,
+        matchedAccent: presetSelection.voice.accent,
+      }),
+    } satisfies ResolvedVoiceSelection;
+  }
+
+  const fallbackVoice = await voicesRepo.findAnyActiveVoice();
+  if (fallbackVoice) {
+    return {
+      voice: fallbackVoice,
+      policy: buildSelectionPolicy({
+        source: 'GLOBAL_FALLBACK',
+        usedFallback: true,
+        requestedVoiceProfileId: voiceProfileId,
+        matchedGender: fallbackVoice.gender,
+        matchedAccent: fallbackVoice.accent,
+      }),
+    } satisfies ResolvedVoiceSelection;
+  }
+
+  throw Object.assign(new Error('Scene hiện chưa có voice preset khả dụng'), {
+    code: 'VOICE_PRESET_NOT_FOUND',
+    status: 409,
+  });
 }
 
 /**
@@ -195,6 +376,8 @@ export async function resolveVoiceSelection(sceneId: string, voiceProfileId?: st
 export async function resolveCustomPracticeVoiceSelection(
   voiceProfileId?: string | null,
   gender?: VoiceGender | null,
+  accentPreference?: string | null,
+  voiceTone?: string | null,
 ) {
   const explicitVoice = voiceProfileId ? await voicesRepo.findVoiceById(voiceProfileId) : null;
 
@@ -206,23 +389,81 @@ export async function resolveCustomPracticeVoiceSelection(
   }
 
   if (explicitVoice) {
-    return explicitVoice;
+    return {
+      voice: explicitVoice,
+      policy: buildSelectionPolicy({
+        source: 'EXPLICIT_SELECTION',
+        usedFallback: false,
+        requestedVoiceProfileId: voiceProfileId,
+        requestedGender: gender ?? null,
+        requestedAccentPreference: accentPreference,
+        requestedVoiceTone: voiceTone,
+        matchedGender: explicitVoice.gender,
+        matchedAccent: explicitVoice.accent,
+        matchedTone: matchesTone(explicitVoice, voiceTone) ? voiceTone?.trim() || null : null,
+      }),
+    } satisfies ResolvedVoiceSelection;
   }
 
-  const genderFallback =
-    gender && gender !== VoiceGender.NEUTRAL
-      ? await voicesRepo.findPreferredVoiceByGender(gender)
-      : null;
-
-  const selectedVoice = genderFallback || await voicesRepo.findAnyActiveVoice();
-  if (!selectedVoice) {
+  const allVoices = await voicesRepo.findAllActiveVoices();
+  if (allVoices.length === 0) {
     throw Object.assign(new Error('Hiện chưa có voice profile khả dụng cho custom practice'), {
       code: 'VOICE_PRESET_NOT_FOUND',
       status: 409,
     });
   }
 
-  return selectedVoice;
+  const requestedGender = gender && gender !== VoiceGender.NEUTRAL ? gender : null;
+  const scoredVoices = allVoices
+    .map((voice) => {
+      const matchedGender = requestedGender ? voice.gender === requestedGender : false;
+      const matchedAccent = matchesAccent(voice, accentPreference);
+      const matchedTone = matchesTone(voice, voiceTone);
+
+      const score = (matchedGender ? 50 : 0) + (matchedAccent ? 25 : 0) + (matchedTone ? 20 : 0);
+
+      return {
+        voice,
+        score,
+        matchedGender,
+        matchedAccent,
+        matchedTone,
+      };
+    })
+    .sort((a, b) => b.score - a.score || a.voice.displayName.localeCompare(b.voice.displayName));
+
+  const bestMatch = scoredVoices[0];
+  if (bestMatch && bestMatch.score > 0) {
+    return {
+      voice: bestMatch.voice,
+      policy: buildSelectionPolicy({
+        source: 'CUSTOM_RULE_BASED',
+        usedFallback: false,
+        requestedVoiceProfileId: voiceProfileId,
+        requestedGender,
+        requestedAccentPreference: accentPreference,
+        requestedVoiceTone: voiceTone,
+        matchedGender: bestMatch.matchedGender ? bestMatch.voice.gender : null,
+        matchedAccent: bestMatch.matchedAccent ? bestMatch.voice.accent : null,
+        matchedTone: bestMatch.matchedTone ? voiceTone?.trim() || null : null,
+      }),
+    } satisfies ResolvedVoiceSelection;
+  }
+
+  const fallbackVoice = allVoices[0];
+  return {
+    voice: fallbackVoice,
+    policy: buildSelectionPolicy({
+      source: 'GLOBAL_FALLBACK',
+      usedFallback: true,
+      requestedVoiceProfileId: voiceProfileId,
+      requestedGender,
+      requestedAccentPreference: accentPreference,
+      requestedVoiceTone: voiceTone,
+      matchedGender: fallbackVoice.gender,
+      matchedAccent: fallbackVoice.accent,
+    }),
+  } satisfies ResolvedVoiceSelection;
 }
 
 /**
