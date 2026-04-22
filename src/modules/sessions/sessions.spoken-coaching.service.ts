@@ -1,0 +1,292 @@
+import { ErrorType, MessageRole, SessionModality, VoiceProvider } from '@prisma/client';
+import { buildVoiceLearningSummary } from './sessions.voice-learning.service';
+import { SessionMessageRecord } from './sessions.repository';
+
+type SpokenCoachingSessionContext = {
+  hintCount: number;
+  modality: SessionModality;
+  voiceProvider: VoiceProvider | null;
+  providerSessionId: string | null;
+  voiceSnapshotName: string | null;
+};
+
+type SpokenCoachingMessageContext = Pick<
+  SessionMessageRecord,
+  | 'id'
+  | 'role'
+  | 'content'
+  | 'turnIndex'
+  | 'modality'
+  | 'audioStartMs'
+  | 'audioEndMs'
+  | 'isFinal'
+  | 'isHint'
+  | 'hasError'
+  | 'errorType'
+  | 'suggestion'
+  | 'explanation'
+  | 'isGood'
+>;
+
+type SpokenCoachingInput = {
+  session: SpokenCoachingSessionContext;
+  messages: SpokenCoachingMessageContext[];
+  scores: {
+    grammar: number | null;
+    vocabulary: number | null;
+    naturalness: number | null;
+  };
+};
+
+function clampScore(value: number, min = 0, max = 100) {
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function getWords(value: string) {
+  return normalizeWhitespace(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9'\s-]/gi, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function getUserMessages(messages: SpokenCoachingMessageContext[]) {
+  return messages.filter((message) => message.role === MessageRole.USER && !message.isHint);
+}
+
+function getAverage(numbers: number[]) {
+  if (numbers.length === 0) return 0;
+  return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+}
+
+function countByErrorType(messages: SpokenCoachingMessageContext[], errorType: ErrorType) {
+  return messages.filter((message) => message.errorType === errorType && message.hasError).length;
+}
+
+function getBaseScore(value: number | null, fallback: number) {
+  return typeof value === 'number' ? value : fallback;
+}
+
+function buildSummary(args: {
+  expressionScore: number;
+  clarityScore: number;
+  confidenceScore: number;
+  shortResponseRatio: number;
+  hintCount: number;
+}) {
+  if (args.expressionScore >= 78 && args.clarityScore >= 78 && args.confidenceScore >= 72) {
+    return 'Bạn diễn đạt ý khá rõ, tự nhiên và đủ tự tin cho ngữ cảnh hội thoại này.';
+  }
+
+  if (args.shortResponseRatio >= 0.45) {
+    return 'Bạn truyền được ý chính, nhưng nhiều lượt trả lời còn ngắn nên cảm giác chưa thật sự tự tin.';
+  }
+
+  if (args.clarityScore < 70) {
+    return 'Bạn có ý đúng ngữ cảnh, nhưng cách diễn đạt đôi lúc chưa đủ rõ hoặc còn vấp ở cấu trúc câu.';
+  }
+
+  if (args.hintCount >= 2) {
+    return 'Bạn bám được hội thoại, nhưng vẫn đang phụ thuộc khá nhiều vào hint để duy trì mạch nói.';
+  }
+
+  return 'Bạn đang nói khá ổn trong ngữ cảnh này; bước tiếp theo là làm câu trả lời dài và tự nhiên hơn một chút.';
+}
+
+function buildStrengths(args: {
+  grammar: number;
+  vocabulary: number;
+  naturalness: number;
+  averageWordsPerTurn: number;
+  questionCount: number;
+}) {
+  const strengths: string[] = [];
+
+  if (args.grammar >= 75) {
+    strengths.push('Cấu trúc câu tương đối ổn, ít lỗi ngữ pháp lớn.');
+  }
+
+  if (args.vocabulary >= 75) {
+    strengths.push('Từ vựng dùng khá hợp ngữ cảnh, không quá nghèo ý.');
+  }
+
+  if (args.naturalness >= 75) {
+    strengths.push('Cách diễn đạt nghe tự nhiên, khá giống hội thoại thật.');
+  }
+
+  if (args.averageWordsPerTurn >= 8) {
+    strengths.push('Phần lớn câu trả lời đủ ý, không bị quá cụt.');
+  }
+
+  if (args.questionCount >= 1) {
+    strengths.push('Bạn biết dùng câu hỏi để giữ mạch hội thoại.');
+  }
+
+  if (strengths.length === 0) {
+    strengths.push('Bạn vẫn giữ được mạch hội thoại và truyền đạt được ý chính.');
+  }
+
+  return strengths.slice(0, 3);
+}
+
+function buildImprovements(args: {
+  grammar: number;
+  vocabulary: number;
+  naturalness: number;
+  shortResponseRatio: number;
+  hintCount: number;
+  grammarErrorCount: number;
+  vocabularyErrorCount: number;
+  naturalnessErrorCount: number;
+}) {
+  const improvements: string[] = [];
+
+  if (args.grammar < 72 || args.grammarErrorCount >= 2) {
+    improvements.push('Ưu tiên nói câu đơn rõ ràng trước, rồi mới nối ý dài hơn.');
+  }
+
+  if (args.vocabulary < 72 || args.vocabularyErrorCount >= 2) {
+    improvements.push('Nên thêm từ cụ thể hơn thay vì lặp lại cùng một kiểu diễn đạt.');
+  }
+
+  if (args.naturalness < 72 || args.naturalnessErrorCount >= 2) {
+    improvements.push('Hãy nói theo cách tự nhiên hơn, tránh dịch từng chữ từ tiếng Việt.');
+  }
+
+  if (args.shortResponseRatio >= 0.4) {
+    improvements.push('Mỗi lượt trả lời nên thêm một chi tiết nữa để nghe tự tin hơn.');
+  }
+
+  if (args.hintCount >= 2) {
+    improvements.push('Thử tự nói trước một lượt rồi mới dùng hint khi thật sự bí.');
+  }
+
+  if (improvements.length === 0) {
+    improvements.push('Bạn có thể nâng level bằng cách mở rộng câu trả lời và thêm lý do hoặc ví dụ.');
+  }
+
+  return improvements.slice(0, 3);
+}
+
+function buildTurnHighlights(userMessages: SpokenCoachingMessageContext[]) {
+  const issueMessages = userMessages
+    .filter((message) => message.hasError)
+    .sort((a, b) => a.turnIndex - b.turnIndex)
+    .slice(0, 2)
+    .map((message) => ({
+      messageId: message.id,
+      turnIndex: message.turnIndex,
+      content: message.content,
+      status: 'NEEDS_WORK' as const,
+      focus: message.errorType ?? ErrorType.NATURALNESS,
+      note: message.explanation || 'Câu này có thể diễn đạt tự nhiên và rõ hơn.',
+      suggestion: message.suggestion ?? null,
+    }));
+
+  const goodMessage = userMessages.find((message) => message.isGood && !message.hasError);
+  const goodHighlight = goodMessage
+    ? [{
+        messageId: goodMessage.id,
+        turnIndex: goodMessage.turnIndex,
+        content: goodMessage.content,
+        status: 'GOOD' as const,
+        focus: 'GOOD_EXAMPLE' as const,
+        note: 'Câu này ổn, có thể giữ cách diễn đạt tương tự ở các lượt sau.',
+        suggestion: null,
+      }]
+    : [];
+
+  return [...issueMessages, ...goodHighlight].slice(0, 3);
+}
+
+/**
+ * Function Objective - buildSpokenCoachingSummary
+ * Summary: Tổng hợp feedback transcript-level cho speaking session mà không cần pronunciation engine riêng.
+ * Inputs: Session context, transcript messages, và 3 trục điểm đã có từ evaluator backend.
+ * Behavior: Tính proxy scores cho expression/clarity/confidence -> rút ra strengths/improvements -> chọn vài turn highlights tiêu biểu.
+ * Returns: Spoken coaching payload UI-friendly cho result screen hoặc completion response.
+ */
+export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
+  const userMessages = getUserMessages(input.messages);
+  if (userMessages.length === 0) {
+    return null;
+  }
+
+  const grammar = getBaseScore(input.scores.grammar, 60);
+  const vocabulary = getBaseScore(input.scores.vocabulary, 58);
+  const naturalness = getBaseScore(input.scores.naturalness, 60);
+  const wordCounts = userMessages.map((message) => getWords(message.content).length);
+  const averageWordsPerTurn = Math.round(getAverage(wordCounts));
+  const shortResponseCount = wordCounts.filter((count) => count <= 3).length;
+  const shortResponseRatio = userMessages.length > 0 ? shortResponseCount / userMessages.length : 0;
+  const questionCount = userMessages.filter((message) => message.content.includes('?')).length;
+  const grammarErrorCount = countByErrorType(userMessages, ErrorType.GRAMMAR);
+  const vocabularyErrorCount = countByErrorType(userMessages, ErrorType.VOCABULARY);
+  const naturalnessErrorCount = countByErrorType(userMessages, ErrorType.NATURALNESS);
+  const voiceLearning = buildVoiceLearningSummary(
+    {
+      modality: input.session.modality,
+      voiceProvider: input.session.voiceProvider,
+      providerSessionId: input.session.providerSessionId,
+      voiceSnapshotName: input.session.voiceSnapshotName,
+    },
+    input.messages,
+  );
+
+  const expressionScore = clampScore(vocabulary * 0.55 + naturalness * 0.45, 35, 96);
+  const clarityScore = clampScore(grammar * 0.6 + naturalness * 0.4, 35, 96);
+  const confidenceBase = 48
+    + Math.min(averageWordsPerTurn * 3.5, 24)
+    + Math.min(userMessages.length * 2.5, 12)
+    + (voiceLearning?.speakingMetrics.transcriptTimingCoverage ?? 0) * 0.05
+    - input.session.hintCount * 4
+    - shortResponseCount * 4;
+  const confidenceScore = clampScore(confidenceBase, 30, 94);
+
+  return {
+    available: true,
+    mode: 'TRANSCRIPT_BASED',
+    summary: buildSummary({
+      expressionScore,
+      clarityScore,
+      confidenceScore,
+      shortResponseRatio,
+      hintCount: input.session.hintCount,
+    }),
+    scores: {
+      expression: expressionScore,
+      clarity: clarityScore,
+      confidence: confidenceScore,
+    },
+    strengths: buildStrengths({
+      grammar,
+      vocabulary,
+      naturalness,
+      averageWordsPerTurn,
+      questionCount,
+    }),
+    improvements: buildImprovements({
+      grammar,
+      vocabulary,
+      naturalness,
+      shortResponseRatio,
+      hintCount: input.session.hintCount,
+      grammarErrorCount,
+      vocabularyErrorCount,
+      naturalnessErrorCount,
+    }),
+    turnHighlights: buildTurnHighlights(userMessages),
+    behaviorSignals: {
+      userTurnCount: userMessages.length,
+      hintCount: input.session.hintCount,
+      averageWordsPerTurn,
+      shortResponseCount,
+      questionCount,
+    },
+    note: 'Đây là coaching dựa trên transcript và cách diễn đạt, chưa phải chấm phát âm.',
+  };
+}

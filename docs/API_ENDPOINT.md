@@ -404,6 +404,11 @@ Tạo một session `ACTIVE` mới và trả opening message đầu tiên để 
 **Quy tắc hiện tại**
 - Chỉ cho phép một session `ACTIVE` tại một thời điểm cho mỗi user.
 - `voiceProfileId` là optional; nếu không truyền, backend tự resolve theo scene preset.
+- Voice selection policy hiện là:
+  - `voiceProfileId` nếu user explicit chọn
+  - `scene default preset`
+  - `scene female/male preset`
+  - fallback sang một active voice bất kỳ nếu scene chưa có preset khả dụng
 - `modality` hỗ trợ `TEXT` hoặc `VOICE`.
 - Opening message hiện là template deterministic theo `scene.category`, `characterName` và `characterRole`.
 - Message mở đầu được lưu luôn vào bảng `messages` với `turnIndex = 0`.
@@ -424,6 +429,22 @@ Tạo một session `ACTIVE` mới và trả opening message đầu tiên để 
       "locale": "en-US",
       "accent": "American",
       "realtimeVoiceId": "verse"
+    },
+    "voiceSelection": {
+      "source": "SCENE_DEFAULT_PRESET",
+      "usedFallback": false,
+      "scenePresetSlot": "default",
+      "requested": {
+        "voiceProfileId": null,
+        "gender": null,
+        "accentPreference": null,
+        "voiceTone": null
+      },
+      "matched": {
+        "gender": "FEMALE",
+        "accent": "American",
+        "tone": null
+      }
     }
   }
 }
@@ -482,7 +503,10 @@ Tạo một session `ACTIVE` từ structured brief của user, không cần `sce
 - Không cần `sceneId`.
 - Backend lưu `custom_practice_configs` rồi tạo session với `sourceType = CUSTOM_PRACTICE`.
 - Chỉ cho phép một session `ACTIVE` tại một thời điểm cho mỗi user.
-- Voice được resolve từ `aiVoicePresetId`; nếu không truyền, backend fallback theo `aiGenderPresentation`.
+- Voice selection policy hiện là:
+  - `aiVoicePresetId` nếu explicit chọn
+  - rule-based match theo `aiGenderPresentation`, `aiAccentPreference`, `aiVoiceTone`
+  - fallback sang một active voice bất kỳ nếu không có match tốt
 - Opening message hiện là deterministic, không cần LLM để mở đầu.
 
 **Response 201**
@@ -520,6 +544,22 @@ Tạo một session `ACTIVE` từ structured brief của user, không cần `sce
       "locale": "en-US",
       "accent": "American",
       "realtimeVoiceId": "alloy"
+    },
+    "voiceSelection": {
+      "source": "CUSTOM_RULE_BASED",
+      "usedFallback": false,
+      "scenePresetSlot": null,
+      "requested": {
+        "voiceProfileId": null,
+        "gender": "FEMALE",
+        "accentPreference": "US",
+        "voiceTone": "CONFIDENT"
+      },
+      "matched": {
+        "gender": "FEMALE",
+        "accent": "American",
+        "tone": "CONFIDENT"
+      }
     }
   }
 }
@@ -533,6 +573,7 @@ Mint Realtime client secret cho WebRTC client của session voice.
 - Session phải đang `ACTIVE`.
 - Session phải có voice profile hợp lệ với `realtimeVoiceId`.
 - Backend build instructions từ scene + level + mission + selected voice, rồi gọi OpenAI Realtime để mint client secret ngắn hạn.
+- Response hiện trả kèm `transport`, `transcriptStrategy`, và `eventModel` để mobile sync voice transcript theo cùng một contract.
 
 **Response 200**
 ```json
@@ -553,7 +594,26 @@ Mint Realtime client secret cho WebRTC client của session voice.
       "transcriptionModel": "gpt-4o-mini-transcribe",
       "turnDetection": "server_vad",
       "outputModalities": ["audio", "text"],
-      "instructions": "You are roleplaying as Mia..."
+      "instructions": "You are roleplaying as Mia...",
+      "transport": {
+        "type": "WEBRTC_DIRECT",
+        "turnDetection": "server_vad",
+        "transcriptionModel": "gpt-4o-mini-transcribe",
+        "inputAudioFormat": "audio/pcm@24000",
+        "outputAudioFormat": "audio/pcm@24000"
+      },
+      "transcriptStrategy": {
+        "partialTranscript": "IGNORE",
+        "finalTranscript": "STORE_AND_EVALUATE",
+        "syncEndpoint": "/api/sessions/:id/message",
+        "completionEndpoint": "/api/sessions/:id/complete"
+      },
+      "eventModel": {
+        "userAudioSource": "USER_AUDIO",
+        "aiAudioSource": "AI_AUDIO",
+        "finalOnlySync": true,
+        "providerSessionIdField": "providerSessionId"
+      }
     },
     "selectedVoice": {
       "id": "uuid",
@@ -587,6 +647,7 @@ Mint Realtime client secret cho WebRTC client của session voice.
 - `source` hỗ trợ `USER_TEXT`, `USER_AUDIO`, `AI_TEXT`, `AI_AUDIO`.
 - Nếu `isFinal = false`, backend bỏ qua để tránh lưu partial transcript.
 - `providerEventId` được dùng để xử lý idempotent khi client retry.
+- Backend chuẩn hóa transcript whitespace/punctuation cơ bản trước khi lưu để evaluator và result screen ổn định hơn.
 - Nếu có `completeSession`, backend xem đây là **legacy tín hiệu kết thúc session** để giữ tương thích với client cũ.
 - Từ thời điểm này, backend sẽ:
   - chấm lại transcript bằng evaluator riêng
@@ -696,6 +757,42 @@ Kích hoạt flow hoàn tất session từ backend sau khi transcript final đã
         "naturalness": 82
       }
     },
+    "spokenCoaching": {
+      "available": true,
+      "mode": "TRANSCRIPT_BASED",
+      "summary": "Bạn đang nói khá ổn trong ngữ cảnh này; bước tiếp theo là làm câu trả lời dài và tự nhiên hơn một chút.",
+      "scores": {
+        "expression": 81,
+        "clarity": 83,
+        "confidence": 74
+      },
+      "strengths": [
+        "Cấu trúc câu tương đối ổn, ít lỗi ngữ pháp lớn.",
+        "Cách diễn đạt nghe tự nhiên, khá giống hội thoại thật."
+      ],
+      "improvements": [
+        "Mỗi lượt trả lời nên thêm một chi tiết nữa để nghe tự tin hơn."
+      ],
+      "turnHighlights": [
+        {
+          "messageId": "uuid",
+          "turnIndex": 2,
+          "content": "I need check in one bag.",
+          "status": "NEEDS_WORK",
+          "focus": "GRAMMAR",
+          "note": "Thiếu động từ đúng dạng",
+          "suggestion": "I need to check in one bag."
+        }
+      ],
+      "behaviorSignals": {
+        "userTurnCount": 5,
+        "hintCount": 1,
+        "averageWordsPerTurn": 8,
+        "shortResponseCount": 1,
+        "questionCount": 1
+      },
+      "note": "Đây là coaching dựa trên transcript và cách diễn đạt, chưa phải chấm phát âm."
+    },
     "rewards": {
       "xpEarned": 61,
       "totalXp": 441,
@@ -750,6 +847,7 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
 - Nếu session còn `ACTIVE` thì trả `SESSION_NOT_FINISHED`.
 - Session `COMPLETED` và `ABANDONED` đều đọc được.
 - Với session `COMPLETED` đi qua flow `POST /sessions/:id/complete` hoặc legacy `completeSession` trong `/message`, backend đã tự chấm score và lưu feedback cho từng `USER` message.
+- Ngoài 3 score cũ, backend còn trả `spokenCoaching` để mobile render feedback kiểu “câu vừa nói có tự nhiên, rõ ý, đủ tự tin chưa”.
 
 **Response 200**
 ```json
@@ -762,6 +860,7 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
       "sourceType": "CURATED_SCENE",
       "status": "COMPLETED",
       "modality": "VOICE",
+      "voiceProvider": "OPENAI",
       "providerSessionId": "sess_xxx",
       "voiceSnapshotName": "Ken - Polite Airport Staff",
       "xpEarned": 60,
@@ -793,6 +892,46 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
         "description": "Check in luggage and ask about gate, boarding time, and seat.",
         "characterName": "David",
         "characterRole": "Check-in Staff"
+      },
+      "voiceLearning": {
+        "available": true,
+        "mode": "REALTIME_TRANSCRIPT",
+        "realtimeProvider": "OPENAI",
+        "providerSessionId": "sess_xxx",
+        "voiceSnapshotName": "Ken - Polite Airport Staff",
+        "transport": {
+          "type": "WEBRTC_DIRECT",
+          "turnDetection": "server_vad",
+          "transcriptionModel": "gpt-4o-mini-transcribe",
+          "inputAudioFormat": "audio/pcm@24000",
+          "outputAudioFormat": "audio/pcm@24000"
+        },
+        "transcriptStrategy": {
+          "partialTranscript": "IGNORE",
+          "finalTranscript": "STORE_AND_EVALUATE",
+          "syncEndpoint": "/api/sessions/:id/message",
+          "completionEndpoint": "/api/sessions/:id/complete"
+        },
+        "eventModel": {
+          "userAudioSource": "USER_AUDIO",
+          "aiAudioSource": "AI_AUDIO",
+          "finalOnlySync": true,
+          "providerSessionIdField": "providerSessionId"
+        },
+        "speakingMetrics": {
+          "userAudioTurns": 5,
+          "aiAudioTurns": 5,
+          "totalUserSpeechMs": 18200,
+          "totalAiSpeechMs": 20100,
+          "averageUserTurnDurationMs": 3640,
+          "transcriptTimingCoverage": 100
+        },
+        "pronunciation": {
+          "available": false,
+          "mode": "NOT_IMPLEMENTED_YET",
+          "score": null,
+          "note": "Chưa có pronunciation assessment thật; hiện backend mới có transcript và audio timing foundation."
+        }
       }
     },
     "messages": [
@@ -820,6 +959,42 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
       "grammar": 85,
       "vocabulary": 78,
       "naturalness": 82
+    },
+    "spokenCoaching": {
+      "available": true,
+      "mode": "TRANSCRIPT_BASED",
+      "summary": "Bạn truyền được ý khá rõ, nhưng một vài lượt còn ngắn nên cảm giác chưa thật sự tự tin.",
+      "scores": {
+        "expression": 80,
+        "clarity": 84,
+        "confidence": 72
+      },
+      "strengths": [
+        "Cấu trúc câu tương đối ổn, ít lỗi ngữ pháp lớn.",
+        "Bạn biết dùng câu hỏi để giữ mạch hội thoại."
+      ],
+      "improvements": [
+        "Mỗi lượt trả lời nên thêm một chi tiết nữa để nghe tự tin hơn."
+      ],
+      "turnHighlights": [
+        {
+          "messageId": "uuid",
+          "turnIndex": 3,
+          "content": "Can you tell me my gate?",
+          "status": "NEEDS_WORK",
+          "focus": "NATURALNESS",
+          "note": "Câu này có thể diễn đạt tự nhiên và rõ hơn.",
+          "suggestion": "Could you tell me which gate I should go to?"
+        }
+      ],
+      "behaviorSignals": {
+        "userTurnCount": 5,
+        "hintCount": 1,
+        "averageWordsPerTurn": 7,
+        "shortResponseCount": 1,
+        "questionCount": 2
+      },
+      "note": "Đây là coaching dựa trên transcript và cách diễn đạt, chưa phải chấm phát âm."
     }
   }
 }

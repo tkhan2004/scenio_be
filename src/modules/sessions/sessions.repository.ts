@@ -37,6 +37,7 @@ const sessionResultSelect = {
   sourceType: true,
   status: true,
   modality: true,
+  voiceProvider: true,
   providerSessionId: true,
   voiceSnapshotName: true,
   grammarScore: true,

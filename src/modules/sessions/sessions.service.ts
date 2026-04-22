@@ -23,6 +23,8 @@ import * as voicesService from '../voices/voices.service';
 import * as sessionsEvaluatorService from './sessions.evaluator.service';
 import * as sessionsRealtimeService from './sessions.realtime.service';
 import * as sessionsRepo from './sessions.repository';
+import * as sessionsSpokenCoachingService from './sessions.spoken-coaching.service';
+import * as sessionsVoiceLearningService from './sessions.voice-learning.service';
 
 const LEVEL_RESULT_PATTERN = /\[LEVEL_RESULT\]([\s\S]*?)\[\/LEVEL_RESULT\]/;
 const LEVEL_VALUES = ['A1', 'A2', 'B1', 'B2'] as const;
@@ -61,6 +63,7 @@ type SessionCompletionResponse = {
     mode: sessionsEvaluatorService.SessionEvaluationResult['evaluationMode'];
     scores: sessionsEvaluatorService.SessionEvaluationResult['scores'];
   };
+  spokenCoaching: ReturnType<typeof sessionsSpokenCoachingService.buildSpokenCoachingSummary>;
   rewards: {
     xpEarned: number;
     totalXp: number;
@@ -505,6 +508,31 @@ async function completeSessionWithEvaluation(
     session,
     messages: finalMessages,
   });
+  const spokenCoaching = sessionsSpokenCoachingService.buildSpokenCoachingSummary({
+    session: {
+      hintCount: session.hintCount,
+      modality: session.modality,
+      voiceProvider: session.voiceProvider,
+      providerSessionId: session.providerSessionId,
+      voiceSnapshotName: session.voiceSnapshotName,
+    },
+    messages: finalMessages.map((message) => {
+      const feedback = evaluation.feedback.find((item) => item.messageId === message.id);
+      return {
+        ...message,
+        hasError: feedback?.hasError ?? message.hasError,
+        errorType: feedback?.errorType ?? message.errorType,
+        suggestion: feedback?.suggestion ?? message.suggestion,
+        explanation: feedback?.explanation ?? message.explanation,
+        isGood: feedback?.isGood ?? message.isGood,
+      };
+    }),
+    scores: {
+      grammar: evaluation.scores.grammar,
+      vocabulary: evaluation.scores.vocabulary,
+      naturalness: evaluation.scores.naturalness,
+    },
+  });
   const today = getTodayDateString();
 
   await missionsService.ensureTodayMissions(userId, today);
@@ -564,6 +592,7 @@ async function completeSessionWithEvaluation(
       mode: evaluation.evaluationMode,
       scores: evaluation.scores,
     },
+    spokenCoaching,
     rewards: {
       xpEarned: evaluation.xpEarned,
       totalXp: completion.rewards.totalXp,
@@ -728,7 +757,7 @@ export async function runLevelTest(userId: string, input: LevelTestInput): Promi
  * Returns: sessionId mới, openingMessage, modality, và selectedVoice để client mở màn practice.
  */
 export async function startSession(userId: string, input: StartSessionInput) {
-  const [user, scene, activeSession, selectedVoice] = await Promise.all([
+  const [user, scene, activeSession, resolvedVoice] = await Promise.all([
     sessionsRepo.findUserById(userId),
     sessionsRepo.findSceneForSessionStart(input.sceneId),
     sessionsRepo.findActiveUserSession(userId),
@@ -751,6 +780,7 @@ export async function startSession(userId: string, input: StartSessionInput) {
     });
   }
 
+  const selectedVoice = resolvedVoice.voice;
   const openingMessage = buildOpeningMessage(scene);
 
   const createdSession = await prisma.$transaction(async (tx) => {
@@ -794,6 +824,7 @@ export async function startSession(userId: string, input: StartSessionInput) {
       accent: selectedVoice.accent,
       realtimeVoiceId: selectedVoice.realtimeVoiceId,
     },
+    voiceSelection: resolvedVoice.policy,
   };
 }
 
@@ -805,12 +836,14 @@ export async function startSession(userId: string, input: StartSessionInput) {
  * Returns: sessionId mới, custom practice summary, openingMessage, modality, và selectedVoice.
  */
 export async function startCustomSession(userId: string, input: StartCustomSessionInput) {
-  const [user, activeSession, selectedVoice] = await Promise.all([
+  const [user, activeSession, resolvedVoice] = await Promise.all([
     sessionsRepo.findUserById(userId),
     sessionsRepo.findActiveUserSession(userId),
     voicesService.resolveCustomPracticeVoiceSelection(
       input.aiPersona.aiVoicePresetId,
       input.aiPersona.aiGenderPresentation,
+      input.aiPersona.aiAccentPreference,
+      input.aiPersona.aiVoiceTone,
     ),
   ]);
 
@@ -826,6 +859,7 @@ export async function startCustomSession(userId: string, input: StartCustomSessi
     });
   }
 
+  const selectedVoice = resolvedVoice.voice;
   const difficulty = input.learningConfig.difficulty || input.userProfile.userEnglishLevel || user.level || Level.A2;
   const displayTitle = getCustomPracticeDisplayTitle(input);
   const displaySubtitle = getCustomPracticeDisplaySubtitle(input);
@@ -942,6 +976,7 @@ export async function startCustomSession(userId: string, input: StartCustomSessi
       accent: selectedVoice.accent,
       realtimeVoiceId: selectedVoice.realtimeVoiceId,
     },
+    voiceSelection: resolvedVoice.policy,
   };
 }
 
@@ -993,7 +1028,7 @@ export async function createRealtimeToken(userId: string, params: CreateRealtime
  * Function Objective - sendSessionMessage
  * Summary: Đồng bộ finalized transcript hoặc text turn từ client về backend session.
  * Inputs: userId, session params, và payload source/content đã validate.
- * Behavior: Kiểm tra ownership -> bỏ qua partial transcript -> lưu final message -> optionally complete session.
+ * Behavior: Kiểm tra ownership -> bỏ qua partial transcript -> chuẩn hóa transcript -> lưu final message -> optionally complete session.
  * Returns: Message vừa lưu và snapshot session hiện tại.
  */
 export async function sendSessionMessage(
@@ -1046,7 +1081,7 @@ export async function sendSessionMessage(
   const storedMessage = await sessionsRepo.createMessage({
     sessionId: session.id,
     role: sourceConfig.role,
-    content: input.content,
+    content: sessionsVoiceLearningService.normalizeTranscriptContent(input.content),
     turnIndex,
     providerEventId: input.providerEventId ?? null,
     modality: sourceConfig.modality,
@@ -1187,8 +1222,8 @@ export async function createSessionHint(
  * Function Objective - getSessionResult
  * Summary: Lấy transcript và điểm số của một session đã kết thúc.
  * Inputs: userId từ access token và session params đã validate.
- * Behavior: Kiểm tra ownership -> từ chối session ACTIVE -> map transcript cùng scores.
- * Returns: Session summary, messages, và scores để client render màn result.
+ * Behavior: Kiểm tra ownership -> từ chối session ACTIVE -> map transcript, scores, và voiceLearning summary nếu là voice session.
+ * Returns: Session summary, messages, scores, và metadata học nói để client render màn result.
  */
 export async function getSessionResult(userId: string, params: GetSessionResultParams) {
   const session = await sessionsRepo.findOwnedSessionById(userId, params.id);
@@ -1204,6 +1239,21 @@ export async function getSessionResult(userId: string, params: GetSessionResultP
   }
 
   const source = getSessionResultSource(session);
+  const spokenCoaching = sessionsSpokenCoachingService.buildSpokenCoachingSummary({
+    session: {
+      hintCount: session.hintCount,
+      modality: session.modality,
+      voiceProvider: session.voiceProvider,
+      providerSessionId: session.providerSessionId,
+      voiceSnapshotName: session.voiceSnapshotName,
+    },
+    messages: session.messages,
+    scores: {
+      grammar: session.grammarScore,
+      vocabulary: session.vocabularyScore,
+      naturalness: session.naturalnessScore,
+    },
+  });
 
   return {
     session: {
@@ -1211,6 +1261,7 @@ export async function getSessionResult(userId: string, params: GetSessionResultP
       sourceType: session.sourceType,
       status: session.status,
       modality: session.modality,
+      voiceProvider: session.voiceProvider,
       providerSessionId: session.providerSessionId,
       voiceSnapshotName: session.voiceSnapshotName,
       xpEarned: session.xpEarned,
@@ -1223,9 +1274,9 @@ export async function getSessionResult(userId: string, params: GetSessionResultP
             displayName: session.voiceProfile.displayName,
             gender: session.voiceProfile.gender,
             locale: session.voiceProfile.locale,
-          accent: session.voiceProfile.accent,
-          realtimeVoiceId: session.voiceProfile.realtimeVoiceId,
-        }
+            accent: session.voiceProfile.accent,
+            realtimeVoiceId: session.voiceProfile.realtimeVoiceId,
+          }
         : null,
       scene: session.scene
         ? {
@@ -1266,6 +1317,15 @@ export async function getSessionResult(userId: string, params: GetSessionResultP
         characterName: source.characterName,
         characterRole: source.characterRole,
       },
+      voiceLearning: sessionsVoiceLearningService.buildVoiceLearningSummary(
+        {
+          modality: session.modality,
+          voiceProvider: session.voiceProvider,
+          providerSessionId: session.providerSessionId,
+          voiceSnapshotName: session.voiceSnapshotName,
+        },
+        session.messages,
+      ),
     },
     messages: session.messages.map(mapSessionMessage),
     scores: {
@@ -1273,6 +1333,7 @@ export async function getSessionResult(userId: string, params: GetSessionResultP
       vocabulary: session.vocabularyScore,
       naturalness: session.naturalnessScore,
     },
+    spokenCoaching,
   };
 }
 

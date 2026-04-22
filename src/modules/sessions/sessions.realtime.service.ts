@@ -1,5 +1,6 @@
 import { createRealtimeClientSecret, getRealtimeDefaults } from '../../config/realtime';
 import { SessionContextRecord } from './sessions.repository';
+import { getVoiceTranscriptStrategy } from './sessions.voice-learning.service';
 
 function getConversationSource(session: SessionContextRecord) {
   if (session.sourceType === 'CUSTOM_PRACTICE' && session.customPracticeConfig) {
@@ -50,11 +51,15 @@ Scenio session rules:
 - Speak only in English.
 - Keep replies concise and natural for a ${level} learner.
 - Use short turns that are easy to follow in voice conversation.
+- Treat this like a live call, not a scripted lesson.
 - Help the learner complete this mission: ${source.missionText}
 - Match this voice/persona: ${voiceLabel} (${styleTags})
 - Encourage the learner naturally, but do not turn into a teacher unless explicitly asked.
 - If the learner struggles, simplify your wording while staying in character.
 - Avoid long monologues.
+- Ask at most one clear question at a time.
+- Do not output stage directions, labels, or markdown.
+- Do not mention transcription, latency, or backend systems.
 
 Learner context:
 - English level: ${level}
@@ -81,6 +86,7 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
   const defaults = getRealtimeDefaults();
   const selectedVoice = session.voiceProfile?.realtimeVoiceId || defaults.voice;
   const instructions = buildRealtimeInstructions(session);
+  const voiceContract = getVoiceTranscriptStrategy();
 
   const realtime = await createRealtimeClientSecret({
     instructions,
@@ -97,6 +103,9 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
       turnDetection: 'server_vad',
       outputModalities: ['audio', 'text'],
       instructions,
+      transport: voiceContract.transport,
+      transcriptStrategy: voiceContract.transcriptStrategy,
+      eventModel: voiceContract.eventModel,
     },
     selectedVoice: session.voiceProfile
       ? {

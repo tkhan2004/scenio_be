@@ -127,31 +127,31 @@ Phần này là những gì backend **đã có nền thật** theo audit hiện 
 ### 4.1. Realtime conversation hardening
 
 - [ ] Chốt luồng realtime production chính thức
-- [ ] Chuẩn hóa event model realtime
-- [ ] Lưu rõ `providerSessionId`
-- [ ] Lưu rõ transcript final / partial strategy
-- [ ] Quy định rõ `VOICE` session khác `TEXT` session ở đâu
+- [x] Chuẩn hóa event model realtime
+- [x] Lưu rõ `providerSessionId`
+- [x] Lưu rõ transcript final / partial strategy
+- [x] Quy định rõ `VOICE` session khác `TEXT` session ở đâu
 
-### 4.2. Speech / pronunciation
+### 4.2. Spoken Transcript Coaching
 
-- [ ] Chọn provider pronunciation assessment
-- [ ] Viết module pronunciation assessment
-- [ ] Lưu pronunciation score theo session
-- [ ] Lưu pronunciation detail nếu cần word-level
-- [ ] Map pronunciation result sang UI-friendly payload
+- [x] Chốt hướng ưu tiên transcript-based speaking evaluation trước pronunciation
+- [x] Trả `spokenCoaching` summary từ transcript/result
+- [x] Dùng transcript + hint + timing proxy để ước lượng confidence-like speaking quality
+- [ ] Nếu sau này thật sự cần, mới chọn provider pronunciation assessment
+- [ ] Nếu sau này thật sự cần, mới lưu pronunciation score/detail riêng
 
 ### 4.3. STT / audio pipeline
 
 - [ ] Chốt có cần fallback upload-audio path không
 - [ ] Nếu có, tạo endpoint upload/process audio
 - [ ] Chốt audio format support
-- [ ] Chốt transcript normalization trước khi evaluate
+- [x] Chốt transcript normalization trước khi evaluate
 
 ### 4.4. Voice persona / role adherence
 
-- [ ] Chuẩn hóa prompt rules cho voice roleplay
-- [ ] Đảm bảo scene/custom practice đều truyền được persona đầy đủ
-- [ ] Chốt cách chọn voice theo:
+- [x] Chuẩn hóa prompt rules cho voice roleplay
+- [x] Đảm bảo scene/custom practice đều truyền được persona đầy đủ
+- [x] Chốt cách chọn voice theo:
   - scene preset
   - custom practice gender / persona
   - explicit user selection
@@ -168,7 +168,8 @@ Phần này là những gì backend **đã có nền thật** theo audit hiện 
 ### Definition of Done
 
 - [ ] Voice session không chỉ “nói được”, mà còn trả dữ liệu học tập đủ dùng
-- [ ] Có đường đi rõ ràng cho pronunciation / speaking assessment
+- [x] Có đường đi rõ ràng cho transcript-based speaking assessment
+- [ ] Pronunciation assessment được xem là phase sau, không chặn MVP voice learning
 
 ---
 
