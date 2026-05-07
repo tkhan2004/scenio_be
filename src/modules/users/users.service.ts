@@ -2,6 +2,7 @@ import { ConditionType, MissionType, Prisma } from '@prisma/client';
 import prisma from '../../config/database';
 import { AddXpInput, UpdateMeInput, UpdateOnboardingInput } from '../../schemas/users';
 import * as missionsService from '../missions/missions.service';
+import * as learningPlanService from '../learning-plan/learning-plan.service';
 import * as usersRepo from './users.repository';
 
 function buildUserProfile(user: NonNullable<Awaited<ReturnType<typeof usersRepo.findPublicUserProfileById>>>) {
@@ -379,6 +380,7 @@ export async function updateOnboarding(userId: string, input: UpdateOnboardingIn
     selfAssessment: input.selfAssessment ?? null,
     onboardingCompletedAt: new Date(),
   });
+  await learningPlanService.generateLearningPlanBestEffort(userId);
 
   return { updated: true };
 }

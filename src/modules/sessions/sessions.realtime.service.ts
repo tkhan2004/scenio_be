@@ -1,4 +1,6 @@
+import { AiFeatureType, AiProvider } from '@prisma/client';
 import { createRealtimeClientSecret, getRealtimeDefaults } from '../../config/realtime';
+import { getAiFeatureRuntimePlan } from '../ai-models/ai-models.service';
 import { SessionContextRecord } from './sessions.repository';
 import { getVoiceTranscriptStrategy } from './sessions.voice-learning.service';
 
@@ -84,22 +86,47 @@ Your job:
  */
 export async function createRealtimeTokenForSession(session: SessionContextRecord) {
   const defaults = getRealtimeDefaults();
+  const realtimePlan = await getAiFeatureRuntimePlan(AiFeatureType.REALTIME_VOICE);
+  const sttPlan = await getAiFeatureRuntimePlan(AiFeatureType.STT);
   const selectedVoice = session.voiceProfile?.realtimeVoiceId || defaults.voice;
   const instructions = buildRealtimeInstructions(session);
   const voiceContract = getVoiceTranscriptStrategy();
+  const realtimeModels = realtimePlan.models.filter((model) => model.provider === AiProvider.OPENAI);
+  const sttModels = sttPlan.models.filter((model) => model.provider === AiProvider.OPENAI);
+  const candidateRealtimeModels = realtimeModels.length > 0 ? realtimeModels.map((model) => model.modelId) : [defaults.model];
+  const transcriptionModel = sttModels[0]?.modelId ?? defaults.transcriptionModel;
 
-  const realtime = await createRealtimeClientSecret({
-    instructions,
-    voice: selectedVoice,
-    model: defaults.model,
-  });
+  let realtime: Awaited<ReturnType<typeof createRealtimeClientSecret>> | null = null;
+  const errors: string[] = [];
+
+  for (const realtimeModel of candidateRealtimeModels) {
+    try {
+      realtime = await createRealtimeClientSecret({
+        instructions,
+        voice: selectedVoice,
+        model: realtimeModel,
+        transcriptionModel,
+      });
+      break;
+    } catch (error: any) {
+      errors.push(`${realtimeModel}: ${error?.message ?? 'unknown error'}`);
+    }
+  }
+
+  if (!realtime) {
+    throw Object.assign(new Error('Không thể tạo realtime token từ primary hoặc fallback models'), {
+      code: 'AI_ENGINE_ERROR',
+      status: 502,
+      details: errors.map((message) => ({ field: 'fallback', message })),
+    });
+  }
 
   return {
     ...realtime,
     sessionConfig: {
       model: realtime.model,
       voice: realtime.voice,
-      transcriptionModel: defaults.transcriptionModel,
+      transcriptionModel,
       turnDetection: 'server_vad',
       outputModalities: ['audio', 'text'],
       instructions,

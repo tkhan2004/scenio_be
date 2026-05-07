@@ -37,9 +37,11 @@ export async function createRealtimeClientSecret(input: {
   instructions: string;
   voice: string;
   model?: string;
+  transcriptionModel?: string;
 }) {
   const apiKey = getRequiredOpenAIApiKey();
   const model = input.model?.trim() || DEFAULT_REALTIME_MODEL;
+  const transcriptionModel = input.transcriptionModel?.trim() || DEFAULT_TRANSCRIBE_MODEL;
 
   const response = await fetch(DEFAULT_API_URL, {
     method: 'POST',
@@ -64,7 +66,7 @@ export async function createRealtimeClientSecret(input: {
               rate: 24000,
             },
             transcription: {
-              model: DEFAULT_TRANSCRIBE_MODEL,
+              model: transcriptionModel,
               language: 'en',
             },
             turn_detection: {

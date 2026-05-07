@@ -28,6 +28,7 @@ const messageSelect = {
   suggestion: true,
   explanation: true,
   isGood: true,
+  feedbackDetails: true,
   isHint: true,
   createdAt: true,
 } satisfies Prisma.MessageSelect;
@@ -97,6 +98,7 @@ const sessionResultSelect = {
 
 const sessionContextSelect = {
   id: true,
+  sceneId: true,
   sourceType: true,
   status: true,
   modality: true,

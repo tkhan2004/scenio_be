@@ -4,6 +4,8 @@ import { adminAuth } from '../../middleware/adminAuth';
 import { validate } from '../../middleware/validate';
 import * as adminController from './admin.controller';
 import {
+  benchmarkAiModelSchema,
+  connectAiModelSchema,
   createAdminMissionSchema,
   createAdminSceneSchema,
   getAdminSceneSchema,
@@ -11,6 +13,7 @@ import {
   getAdminUserSessionsSchema,
   getAllUsersSchema,
   getOverviewSchema,
+  listAiModelsSchema,
   listAdminBadgesSchema,
   listAdminMissionsSchema,
   listAdminScenesSchema,
@@ -26,6 +29,24 @@ import {
 const router = Router();
 
 router.use(auth, adminAuth);
+
+/**
+ * @route   GET /api/admin/ai-models
+ * @desc    Lấy AI model catalog và active setting theo feature
+ */
+router.get('/ai-models', validate(listAiModelsSchema), adminController.listAiModels);
+
+/**
+ * @route   POST /api/admin/ai-models/:id/benchmark
+ * @desc    Benchmark model để so sánh latency và output
+ */
+router.post('/ai-models/:id/benchmark', validate(benchmarkAiModelSchema), adminController.benchmarkAiModel);
+
+/**
+ * @route   PATCH /api/admin/ai-models/:id/connect
+ * @desc    Connect và chọn model làm active cho feature tương ứng
+ */
+router.patch('/ai-models/:id/connect', validate(connectAiModelSchema), adminController.connectAiModel);
 
 /**
  * @route   GET /api/admin/overview

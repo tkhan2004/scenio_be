@@ -1,13 +1,23 @@
 import Anthropic from '@anthropic-ai/sdk';
-import OpenAI from 'openai';
-import { ErrorType, MessageRole } from '@prisma/client';
+import { AiFeatureType, AiProvider, ErrorType, MessageRole } from '@prisma/client';
 import { z } from 'zod';
-import { getLLMClient, provider } from '../../config/llm';
+import { provider } from '../../config/llm';
+import { getAiFeatureRuntimePlan } from '../ai-models/ai-models.service';
 import { SessionContextRecord, SessionMessageRecord } from './sessions.repository';
 
 const OPENAI_EVALUATOR_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const CLAUDE_EVALUATOR_MODEL = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
 const SHORT_VI_EXPLANATION_LIMIT = 15;
+
+const feedbackIssueSchema = z.object({
+  type: z.nativeEnum(ErrorType),
+  subtype: z.string().trim().min(1).max(40).nullable().optional(),
+  originalPhrase: z.string().nullable().optional(),
+  suggestion: z.string().nullable().optional(),
+  explanation: z.string().nullable().optional(),
+  startIndex: z.number().int().min(0).nullable().optional(),
+  endIndex: z.number().int().min(0).nullable().optional(),
+});
 
 const aiEvaluationSchema = z.object({
   scores: z.object({
@@ -23,6 +33,7 @@ const aiEvaluationSchema = z.object({
     suggestion: z.string().nullable().optional(),
     explanation: z.string().nullable().optional(),
     isGood: z.boolean(),
+    issues: z.array(feedbackIssueSchema).optional().default([]),
   })),
 });
 
@@ -35,6 +46,7 @@ type SessionEvaluationInput = {
   session: SessionContextRecord;
   messages: SessionMessageRecord[];
 };
+type RuntimeAiModel = Awaited<ReturnType<typeof getAiFeatureRuntimePlan>>['models'][number];
 
 export type SessionFeedbackItem = {
   messageId: string;
@@ -44,6 +56,17 @@ export type SessionFeedbackItem = {
   suggestion: string | null;
   explanation: string | null;
   isGood: boolean;
+  feedbackDetails: {
+    issues: Array<{
+      type: ErrorType;
+      subtype: string | null;
+      originalPhrase: string | null;
+      suggestion: string | null;
+      explanation: string | null;
+      startIndex: number | null;
+      endIndex: number | null;
+    }>;
+  };
 };
 
 export type SessionEvaluationResult = {
@@ -126,6 +149,7 @@ Your task:
 - evaluate the learner's spoken transcript after the session finishes
 - score grammar, vocabulary, and naturalness on a 0-100 scale
 - produce one feedback item for every USER message
+- include zero or more detailed issues for every feedback item
 
 Rules:
 - Judge only what is visible in the transcript. Do not judge pronunciation or audio quality.
@@ -138,6 +162,7 @@ Rules:
   - suggestion: null
   - explanation: null
   - isGood: true
+  - issues: []
 - If there is an issue, set:
   - hasError: true
   - errorType: one of GRAMMAR, VOCABULARY, NATURALNESS
@@ -145,6 +170,14 @@ Rules:
   - suggestion: a short improved version in English
   - explanation: a very short Vietnamese explanation, maximum 15 words
   - isGood: false
+  - issues: include every important issue in that message, up to 3 issues
+- Each issue should include:
+  - type: one of GRAMMAR, VOCABULARY, NATURALNESS
+  - subtype: short uppercase label like TENSE, WORD_CHOICE, ARTICLE, SENTENCE_STRUCTURE, POLITENESS, CLARITY
+  - originalPhrase: short problematic phrase
+  - suggestion: short improved English phrase or sentence
+  - explanation: Vietnamese explanation, maximum 15 words
+  - startIndex/endIndex: character indexes in the original user message if easy, otherwise null
 - Focus on whether the learner expressed the idea clearly, naturally, and appropriately for the roleplay context.
 - Keep scores realistic for a learner, not overly generous.
 - Consider the whole conversation context, mission, and learner level.
@@ -164,7 +197,18 @@ Required JSON shape:
       "originalPhrase": "I go yesterday",
       "suggestion": "I went yesterday",
       "explanation": "Sai thì quá khứ",
-      "isGood": false
+      "isGood": false,
+      "issues": [
+        {
+          "type": "GRAMMAR",
+          "subtype": "TENSE",
+          "originalPhrase": "go yesterday",
+          "suggestion": "went yesterday",
+          "explanation": "Sai thì quá khứ",
+          "startIndex": null,
+          "endIndex": null
+        }
+      ]
     }
   ]
 }`;
@@ -213,12 +257,73 @@ function extractJsonObject(rawText: string) {
 }
 
 async function callEvaluationProvider(messages: ProviderMessage[]) {
-  const client = getLLMClient();
+  const plan = await getAiFeatureRuntimePlan(AiFeatureType.EVALUATOR_LLM);
+  const models = plan.models.length > 0
+    ? plan.models
+    : [getEnvDefaultEvaluatorModel()];
+  const errors: string[] = [];
 
-  if (provider === 'claude') {
-    const anthropic = client as Anthropic;
+  for (const model of models) {
+    try {
+      return await callRuntimeEvaluatorModel(model, messages);
+    } catch (error: any) {
+      errors.push(`${model.provider}/${model.modelId}: ${error?.message ?? 'unknown error'}`);
+    }
+  }
+
+  throw Object.assign(new Error('Evaluator fallback chain failed'), {
+    code: 'AI_ENGINE_ERROR',
+    status: 502,
+    details: errors.map((message) => ({ field: 'fallback', message })),
+  });
+}
+
+function getEnvDefaultEvaluatorModel(): RuntimeAiModel {
+  return {
+    id: 'env-default-evaluator',
+    featureType: AiFeatureType.EVALUATOR_LLM,
+    provider: provider === 'claude' ? AiProvider.ANTHROPIC : AiProvider.OPENAI,
+    modelId: provider === 'claude' ? CLAUDE_EVALUATOR_MODEL : OPENAI_EVALUATOR_MODEL,
+    displayName: 'Environment default evaluator model',
+    description: null,
+    inputModalities: ['TEXT'],
+    outputType: 'JSON',
+    dimensionOptions: [],
+    defaultDimension: null,
+    config: null,
+    isActive: true,
+    isSystem: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
+function getRequiredProviderApiKey(providerName: AiProvider) {
+  const envName = providerName === AiProvider.ANTHROPIC
+    ? 'CLAUDE_API_KEY'
+    : providerName === AiProvider.GOOGLE
+      ? 'GEMINI_API_KEY'
+      : 'OPENAI_API_KEY';
+  const value = process.env[envName]?.trim();
+  const isPlaceholder =
+    !value ||
+    value.includes('replace-with-your-key') ||
+    value.includes('replace_with_your_key') ||
+    value.startsWith('your_') ||
+    value.startsWith('sk-replace');
+
+  if (isPlaceholder) {
+    throw new Error(`Thiếu ${envName} hợp lệ`);
+  }
+
+  return value;
+}
+
+async function callRuntimeEvaluatorModel(model: RuntimeAiModel, messages: ProviderMessage[]) {
+  if (model.provider === AiProvider.ANTHROPIC) {
+    const anthropic = new Anthropic({ apiKey: getRequiredProviderApiKey(AiProvider.ANTHROPIC) });
     const response = await anthropic.messages.create({
-      model: CLAUDE_EVALUATOR_MODEL,
+      model: model.modelId,
       max_tokens: 1800,
       temperature: 0.2,
       system: buildEvaluationSystemPrompt(),
@@ -238,20 +343,86 @@ async function callEvaluationProvider(messages: ProviderMessage[]) {
     return text;
   }
 
-  const openai = client as OpenAI;
-  const response = await openai.chat.completions.create({
-    model: OPENAI_EVALUATOR_MODEL,
-    temperature: 0.2,
-    max_tokens: 1800,
-    messages: [
-      { role: 'system', content: buildEvaluationSystemPrompt() },
-      ...messages,
-    ],
-  });
+  if (model.provider === AiProvider.GOOGLE) {
+    return callGeminiEvaluatorModel(model.modelId, messages);
+  }
 
-  const text = response.choices[0]?.message?.content?.trim();
+  return callOpenAiEvaluatorModel(model.modelId, messages);
+}
+
+async function callOpenAiEvaluatorModel(modelId: string, messages: ProviderMessage[]) {
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getRequiredProviderApiKey(AiProvider.OPENAI)}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: modelId,
+      temperature: 0.2,
+      max_output_tokens: 1800,
+      input: [
+        { role: 'system', content: buildEvaluationSystemPrompt() },
+        ...messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      ],
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? `OpenAI tra loi ${response.status}`);
+  }
+
+  const text = payload?.output_text
+    ?? payload?.output?.flatMap((item: any) => item.content ?? [])
+      .map((content: any) => content.text ?? content.output_text ?? '')
+      .join('\n')
+      .trim();
+
   if (!text) {
     throw new Error('OpenAI không trả về nội dung evaluator');
+  }
+
+  return text;
+}
+
+async function callGeminiEvaluatorModel(modelId: string, messages: ProviderMessage[]) {
+  const baseUrl = (process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/models/${modelId}:generateContent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': getRequiredProviderApiKey(AiProvider.GOOGLE),
+    },
+    body: JSON.stringify({
+      system_instruction: {
+        parts: [{ text: buildEvaluationSystemPrompt() }],
+      },
+      contents: messages.map((message) => ({
+        role: message.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: message.content }],
+      })),
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 1800,
+        responseMimeType: 'application/json',
+      },
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? `Gemini tra loi ${response.status}`);
+  }
+
+  const text = payload?.candidates?.[0]?.content?.parts
+    ?.map((part: any) => part.text ?? '')
+    .join('\n')
+    .trim();
+
+  if (!text) {
+    throw new Error('Gemini không trả về nội dung evaluator');
   }
 
   return text;
@@ -263,26 +434,48 @@ function buildHeuristicFeedback(message: SessionMessageRecord): SessionFeedbackI
   const uniqueWordCount = getUniqueWordCount(words);
 
   if (words.length <= 3) {
+    const issue = {
+      type: ErrorType.NATURALNESS,
+      subtype: 'SHORT_RESPONSE',
+      originalPhrase: text,
+      suggestion: 'Try a slightly longer response with one more detail.',
+      explanation: 'Câu trả lời còn quá ngắn',
+      startIndex: 0,
+      endIndex: text.length,
+    };
+
     return {
       messageId: message.id,
       hasError: true,
       errorType: ErrorType.NATURALNESS,
-      originalPhrase: text,
-      suggestion: 'Try a slightly longer response with one more detail.',
-      explanation: 'Câu trả lời còn quá ngắn',
+      originalPhrase: issue.originalPhrase,
+      suggestion: issue.suggestion,
+      explanation: issue.explanation,
       isGood: false,
+      feedbackDetails: { issues: [issue] },
     };
   }
 
   if (words.length >= 6 && uniqueWordCount <= Math.max(3, Math.floor(words.length * 0.5))) {
+    const issue = {
+      type: ErrorType.VOCABULARY,
+      subtype: 'REPETITION',
+      originalPhrase: text,
+      suggestion: 'Add one more specific word or detail to sound clearer.',
+      explanation: 'Từ vựng còn hơi lặp',
+      startIndex: 0,
+      endIndex: text.length,
+    };
+
     return {
       messageId: message.id,
       hasError: true,
       errorType: ErrorType.VOCABULARY,
-      originalPhrase: text,
-      suggestion: 'Add one more specific word or detail to sound clearer.',
-      explanation: 'Từ vựng còn hơi lặp',
+      originalPhrase: issue.originalPhrase,
+      suggestion: issue.suggestion,
+      explanation: issue.explanation,
       isGood: false,
+      feedbackDetails: { issues: [issue] },
     };
   }
 
@@ -294,6 +487,7 @@ function buildHeuristicFeedback(message: SessionMessageRecord): SessionFeedbackI
     suggestion: null,
     explanation: null,
     isGood: true,
+    feedbackDetails: { issues: [] },
   };
 }
 
@@ -349,16 +543,40 @@ function sanitizeFeedbackItem(
   fallbackMessage: SessionMessageRecord,
 ): SessionFeedbackItem {
   const hasError = Boolean(rawItem.hasError);
-  const errorType = hasError ? rawItem.errorType ?? ErrorType.GRAMMAR : null;
+  const rawIssues = hasError
+    ? rawItem.issues.length > 0
+      ? rawItem.issues
+      : [{
+          type: rawItem.errorType ?? ErrorType.GRAMMAR,
+          subtype: null,
+          originalPhrase: rawItem.originalPhrase,
+          suggestion: rawItem.suggestion,
+          explanation: rawItem.explanation,
+          startIndex: null,
+          endIndex: null,
+        }]
+    : [];
+  const issues = rawIssues.slice(0, 3).map((issue) => ({
+    type: issue.type,
+    subtype: issue.subtype ? normalizeWhitespace(issue.subtype).toUpperCase().slice(0, 40) : null,
+    originalPhrase: normalizeWhitespace(issue.originalPhrase || rawItem.originalPhrase || fallbackMessage.content).slice(0, 240) || null,
+    suggestion: normalizeWhitespace(issue.suggestion || rawItem.suggestion || '').slice(0, 240) || null,
+    explanation: truncateVietnameseExplanation(issue.explanation || rawItem.explanation),
+    startIndex: typeof issue.startIndex === 'number' ? issue.startIndex : null,
+    endIndex: typeof issue.endIndex === 'number' ? issue.endIndex : null,
+  }));
+  const primaryIssue = issues[0] ?? null;
+  const errorType = hasError ? primaryIssue?.type ?? rawItem.errorType ?? ErrorType.GRAMMAR : null;
 
   return {
     messageId: fallbackMessage.id,
     hasError,
     errorType,
-    originalPhrase: hasError ? normalizeWhitespace(rawItem.originalPhrase || fallbackMessage.content).slice(0, 240) : null,
-    suggestion: hasError ? normalizeWhitespace(rawItem.suggestion || '').slice(0, 240) || null : null,
-    explanation: hasError ? truncateVietnameseExplanation(rawItem.explanation) : null,
+    originalPhrase: hasError ? primaryIssue?.originalPhrase ?? normalizeWhitespace(rawItem.originalPhrase || fallbackMessage.content).slice(0, 240) : null,
+    suggestion: hasError ? primaryIssue?.suggestion ?? (normalizeWhitespace(rawItem.suggestion || '').slice(0, 240) || null) : null,
+    explanation: hasError ? primaryIssue?.explanation ?? truncateVietnameseExplanation(rawItem.explanation) : null,
     isGood: hasError ? false : true,
+    feedbackDetails: { issues },
   };
 }
 

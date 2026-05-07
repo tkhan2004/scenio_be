@@ -1,8 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
-import OpenAI from 'openai';
-import { Level, MessageModality, MessageRole, SceneCategory, SessionModality } from '@prisma/client';
+import { AiFeatureType, AiProvider, ErrorType, Level, MessageModality, MessageRole, SceneCategory, SessionModality } from '@prisma/client';
 import prisma from '../../config/database';
-import { getLLMClient, provider } from '../../config/llm';
+import { provider } from '../../config/llm';
 import {
   AbandonSessionParams,
   CompleteSessionParams,
@@ -18,6 +17,8 @@ import {
   StartSessionInput,
 } from '../../schemas/sessions';
 import * as missionsService from '../missions/missions.service';
+import { getAiFeatureRuntimePlan } from '../ai-models/ai-models.service';
+import * as learningPlanService from '../learning-plan/learning-plan.service';
 import * as usersService from '../users/users.service';
 import * as voicesService from '../voices/voices.service';
 import * as sessionsEvaluatorService from './sessions.evaluator.service';
@@ -44,6 +45,7 @@ type LevelTestResult = {
 };
 
 type MessageSource = SendSessionMessageInput['source'];
+type RuntimeAiModel = Awaited<ReturnType<typeof getAiFeatureRuntimePlan>>['models'][number];
 
 const MESSAGE_SOURCE_MAP: Record<MessageSource, { role: MessageRole; modality: MessageModality }> = {
   USER_TEXT: { role: MessageRole.USER, modality: MessageModality.TEXT },
@@ -64,6 +66,7 @@ type SessionCompletionResponse = {
     scores: sessionsEvaluatorService.SessionEvaluationResult['scores'];
   };
   spokenCoaching: ReturnType<typeof sessionsSpokenCoachingService.buildSpokenCoachingSummary>;
+  nextLearningAction: ReturnType<typeof buildNextLearningAction>;
   rewards: {
     xpEarned: number;
     totalXp: number;
@@ -453,6 +456,7 @@ function mapSessionMessage(message: sessionsRepo.SessionMessageRecord | sessions
     suggestion: message.suggestion,
     explanation: message.explanation,
     isGood: message.isGood,
+    feedbackDetails: message.feedbackDetails,
     isHint: message.isHint,
     createdAt: message.createdAt,
   };
@@ -464,6 +468,74 @@ function mapSessionMessage(message: sessionsRepo.SessionMessageRecord | sessions
  */
 function getTodayDateString() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function buildNextLearningAction(input: {
+  scores: {
+    grammar: number | null;
+    vocabulary: number | null;
+    naturalness: number | null;
+  };
+  feedbackItems: Array<{
+    hasError: boolean | null;
+    errorType: ErrorType | null;
+  }>;
+  sourceTitle?: string | null;
+}) {
+  const scoreEntries = [
+    { key: 'grammar' as const, value: input.scores.grammar },
+    { key: 'vocabulary' as const, value: input.scores.vocabulary },
+    { key: 'naturalness' as const, value: input.scores.naturalness },
+  ].filter((item): item is { key: 'grammar' | 'vocabulary' | 'naturalness'; value: number } => (
+    typeof item.value === 'number'
+  ));
+
+  if (scoreEntries.length === 0) return null;
+
+  const weakest = scoreEntries.reduce((min, item) => (item.value < min.value ? item : min), scoreEntries[0]);
+  const issueCounts = input.feedbackItems.reduce(
+    (acc, item) => {
+      if (!item.hasError || !item.errorType) return acc;
+      acc[item.errorType] += 1;
+      return acc;
+    },
+    {
+      [ErrorType.GRAMMAR]: 0,
+      [ErrorType.VOCABULARY]: 0,
+      [ErrorType.NATURALNESS]: 0,
+    },
+  );
+
+  if (weakest.key === 'grammar') {
+    return {
+      type: 'GRAMMAR_PRACTICE',
+      focus: 'GRAMMAR',
+      title: 'Practice cleaner sentence structure',
+      reason: `Grammar is your lowest score (${weakest.value}) with ${issueCounts.GRAMMAR} grammar issue(s).`,
+      ctaLabel: 'Practice grammar',
+      suggestedSceneQuery: input.sourceTitle ? `${input.sourceTitle} grammar follow-up` : 'grammar roleplay practice',
+    };
+  }
+
+  if (weakest.key === 'vocabulary') {
+    return {
+      type: 'VOCABULARY_REVIEW',
+      focus: 'VOCABULARY',
+      title: 'Review useful words and phrases',
+      reason: `Vocabulary is your lowest score (${weakest.value}) with ${issueCounts.VOCABULARY} vocabulary issue(s).`,
+      ctaLabel: 'Review vocabulary',
+      suggestedSceneQuery: input.sourceTitle ? `${input.sourceTitle} useful phrases` : 'vocabulary roleplay practice',
+    };
+  }
+
+  return {
+    type: 'NATURALNESS_RETRY',
+    focus: 'NATURALNESS',
+    title: 'Try a more natural reply',
+    reason: `Naturalness is your lowest score (${weakest.value}) with ${issueCounts.NATURALNESS} naturalness issue(s).`,
+    ctaLabel: 'Try again',
+    suggestedSceneQuery: input.sourceTitle ? `${input.sourceTitle} natural conversation` : 'natural conversation practice',
+  };
 }
 
 /**
@@ -550,6 +622,7 @@ async function completeSessionWithEvaluation(
           suggestion: feedback.suggestion,
           explanation: feedback.explanation,
           isGood: feedback.isGood,
+          feedbackDetails: feedback.feedbackDetails,
         },
         tx,
       );
@@ -581,6 +654,15 @@ async function completeSessionWithEvaluation(
     };
   });
 
+  await learningPlanService.updatePlanAfterSessionComplete(userId, {
+    sceneId: session.sceneId,
+    scores: evaluation.scores,
+    feedbackItems: evaluation.feedback.map((item) => ({
+      hasError: item.hasError,
+      errorType: item.errorType,
+    })),
+  });
+
   return {
     ...(completion.message ? { message: mapSessionMessage(completion.message) } : {}),
     session: {
@@ -593,6 +675,11 @@ async function completeSessionWithEvaluation(
       scores: evaluation.scores,
     },
     spokenCoaching,
+    nextLearningAction: buildNextLearningAction({
+      scores: evaluation.scores,
+      feedbackItems: evaluation.feedback,
+      sourceTitle: getSessionConversationSource(session).title,
+    }),
     rewards: {
       xpEarned: evaluation.xpEarned,
       totalXp: completion.rewards.totalXp,
@@ -613,13 +700,79 @@ async function callTextProvider(args: {
   temperature: number;
   maxTokens: number;
 }) {
-  const client = getLLMClient();
+  const plan = await getAiFeatureRuntimePlan(AiFeatureType.ROLEPLAY_LLM);
+  const models = plan.models.length > 0
+    ? plan.models
+    : [getEnvDefaultTextModel()];
+  const errors: string[] = [];
 
+  for (const model of models) {
+    try {
+      return await callRuntimeTextModel(model, args);
+    } catch (error: any) {
+      errors.push(`${model.provider}/${model.modelId}: ${error?.message ?? 'unknown error'}`);
+    }
+  }
+
+  throw Object.assign(new Error('Không thể gọi AI engine từ primary hoặc fallback models'), {
+    code: 'AI_ENGINE_ERROR',
+    status: 502,
+    details: errors.map((message) => ({ field: 'fallback', message })),
+  });
+}
+
+function getEnvDefaultTextModel(): RuntimeAiModel {
+  return {
+    id: 'env-default-roleplay',
+    featureType: AiFeatureType.ROLEPLAY_LLM,
+    provider: provider === 'claude' ? AiProvider.ANTHROPIC : AiProvider.OPENAI,
+    modelId: provider === 'claude' ? CLAUDE_LEVEL_TEST_MODEL : OPENAI_LEVEL_TEST_MODEL,
+    displayName: 'Environment default roleplay model',
+    description: null,
+    inputModalities: ['TEXT'],
+    outputType: 'TEXT',
+    dimensionOptions: [],
+    defaultDimension: null,
+    config: null,
+    isActive: true,
+    isSystem: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
+function getRequiredProviderApiKey(providerName: AiProvider) {
+  const envName = providerName === AiProvider.ANTHROPIC
+    ? 'CLAUDE_API_KEY'
+    : providerName === AiProvider.GOOGLE
+      ? 'GEMINI_API_KEY'
+      : 'OPENAI_API_KEY';
+  const value = process.env[envName]?.trim();
+  const isPlaceholder =
+    !value ||
+    value.includes('replace-with-your-key') ||
+    value.includes('replace_with_your_key') ||
+    value.startsWith('your_') ||
+    value.startsWith('sk-replace');
+
+  if (isPlaceholder) {
+    throw new Error(`Thiếu ${envName} hợp lệ`);
+  }
+
+  return value;
+}
+
+async function callRuntimeTextModel(model: RuntimeAiModel, args: {
+  systemPrompt: string;
+  messages: ProviderMessage[];
+  temperature: number;
+  maxTokens: number;
+}) {
   try {
-    if (provider === 'claude') {
-      const anthropic = client as Anthropic;
+    if (model.provider === AiProvider.ANTHROPIC) {
+      const anthropic = new Anthropic({ apiKey: getRequiredProviderApiKey(AiProvider.ANTHROPIC) });
       const response = await anthropic.messages.create({
-        model: CLAUDE_LEVEL_TEST_MODEL,
+        model: model.modelId,
         max_tokens: args.maxTokens,
         temperature: args.temperature,
         system: args.systemPrompt,
@@ -639,23 +792,11 @@ async function callTextProvider(args: {
       return text;
     }
 
-    const openai = client as OpenAI;
-    const response = await openai.chat.completions.create({
-      model: OPENAI_LEVEL_TEST_MODEL,
-      temperature: args.temperature,
-      max_tokens: args.maxTokens,
-      messages: [
-        { role: 'system', content: args.systemPrompt },
-        ...args.messages,
-      ],
-    });
-
-    const text = response.choices[0]?.message?.content?.trim();
-    if (!text) {
-      throw new Error('OpenAI không trả về nội dung');
+    if (model.provider === AiProvider.GOOGLE) {
+      return callGeminiTextModel(model.modelId, args);
     }
 
-    return text;
+    return callOpenAiTextModel(model.modelId, args);
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && 'status' in error) {
       throw error;
@@ -667,6 +808,93 @@ async function callTextProvider(args: {
       details: error instanceof Error ? [{ field: 'provider', message: error.message }] : null,
     });
   }
+}
+
+async function callOpenAiTextModel(modelId: string, args: {
+  systemPrompt: string;
+  messages: ProviderMessage[];
+  temperature: number;
+  maxTokens: number;
+}) {
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getRequiredProviderApiKey(AiProvider.OPENAI)}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: modelId,
+      temperature: args.temperature,
+      max_output_tokens: args.maxTokens,
+      input: [
+        { role: 'system', content: args.systemPrompt },
+        ...args.messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+      ],
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? `OpenAI tra loi ${response.status}`);
+  }
+
+  const text = payload?.output_text
+    ?? payload?.output?.flatMap((item: any) => item.content ?? [])
+      .map((content: any) => content.text ?? content.output_text ?? '')
+      .join('\n')
+      .trim();
+
+  if (!text) {
+    throw new Error('OpenAI không trả về nội dung');
+  }
+
+  return text;
+}
+
+async function callGeminiTextModel(modelId: string, args: {
+  systemPrompt: string;
+  messages: ProviderMessage[];
+  temperature: number;
+  maxTokens: number;
+}) {
+  const baseUrl = (process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/models/${modelId}:generateContent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': getRequiredProviderApiKey(AiProvider.GOOGLE),
+    },
+    body: JSON.stringify({
+      system_instruction: {
+        parts: [{ text: args.systemPrompt }],
+      },
+      contents: args.messages.map((message) => ({
+        role: message.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: message.content }],
+      })),
+      generationConfig: {
+        temperature: args.temperature,
+        maxOutputTokens: args.maxTokens,
+      },
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? `Gemini tra loi ${response.status}`);
+  }
+
+  const text = payload?.candidates?.[0]?.content?.parts
+    ?.map((part: any) => part.text ?? '')
+    .join('\n')
+    .trim();
+
+  if (!text) {
+    throw new Error('Gemini không trả về nội dung');
+  }
+
+  return text;
 }
 
 /**
@@ -740,6 +968,7 @@ export async function runLevelTest(userId: string, input: LevelTestInput): Promi
   }
 
   await sessionsRepo.completeLevelTest(userId, parsed.level);
+  await learningPlanService.generateLearningPlanBestEffort(userId);
 
   return {
     aiMessage: parsed.aiMessage,
@@ -1334,6 +1563,18 @@ export async function getSessionResult(userId: string, params: GetSessionResultP
       naturalness: session.naturalnessScore,
     },
     spokenCoaching,
+    nextLearningAction: buildNextLearningAction({
+      scores: {
+        grammar: session.grammarScore,
+        vocabulary: session.vocabularyScore,
+        naturalness: session.naturalnessScore,
+      },
+      feedbackItems: session.messages.map((message) => ({
+        hasError: message.hasError,
+        errorType: message.errorType,
+      })),
+      sourceTitle: source.title,
+    }),
   };
 }
 

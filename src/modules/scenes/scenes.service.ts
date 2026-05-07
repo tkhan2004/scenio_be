@@ -1,6 +1,7 @@
 import { Level, Prisma, SceneCategory } from '@prisma/client';
 import * as scenesRepo from './scenes.repository';
 import * as voicesService from '../voices/voices.service';
+import * as sceneEmbeddingsService from '../scene-embeddings/scene-embeddings.service';
 import {
   ListScenesQuery,
   RecommendScenesQuery,
@@ -12,6 +13,16 @@ type SearchScene = scenesRepo.SearchSceneRecord;
 type SceneDetail = scenesRepo.SceneDetailRecord;
 type RecommendationCandidate = scenesRepo.RecommendationCandidateRecord;
 type WeakSkill = 'grammar' | 'vocabulary' | 'naturalness';
+type SceneCardLike = SceneCard | SearchScene | RecommendationCandidate | {
+  id: string;
+  title: string;
+  category: SceneCategory;
+  description: string;
+  difficulty: Level;
+  estimatedMinutes: number;
+  characterName: string;
+  characterRole: string;
+};
 
 const LEVEL_ORDER: Level[] = [Level.A1, Level.A2, Level.B1, Level.B2];
 const SKILL_KEYWORDS: Record<WeakSkill, string[]> = {
@@ -29,7 +40,7 @@ const SKILL_CATEGORY_PRIORITY: Record<WeakSkill, SceneCategory[]> = {
  * Helper - mapSceneCard
  * Summary: Chuẩn hóa record từ repository thành scene card trả cho client.
  */
-function mapSceneCard(scene: SceneCard | SearchScene | RecommendationCandidate) {
+function mapSceneCard(scene: SceneCardLike) {
   return {
     id: scene.id,
     title: scene.title,
@@ -39,6 +50,40 @@ function mapSceneCard(scene: SceneCard | SearchScene | RecommendationCandidate) 
     estimatedMinutes: scene.estimatedMinutes,
     characterName: scene.characterName,
     characterRole: scene.characterRole,
+  };
+}
+
+function getSkillLabel(skill: WeakSkill) {
+  return skill.toUpperCase();
+}
+
+function mapSearchSceneCard(scene: SceneCardLike, metadata?: {
+  retrievalMode?: string;
+  similarity?: number | null;
+  matchReason?: string | null;
+}) {
+  return {
+    ...mapSceneCard(scene),
+    retrievalMode: metadata?.retrievalMode ?? 'TEXT_FALLBACK',
+    similarity: metadata?.similarity ?? null,
+    matchReason: metadata?.matchReason ?? null,
+  };
+}
+
+function mapRecommendedSceneCard(scene: SceneCardLike, metadata: {
+  retrievalMode: string;
+  score: number;
+  focusSkill: WeakSkill;
+  matchReason: string;
+  similarity?: number | null;
+}) {
+  return {
+    ...mapSceneCard(scene),
+    retrievalMode: metadata.retrievalMode,
+    score: Math.round(metadata.score * 100) / 100,
+    focusSkill: getSkillLabel(metadata.focusSkill),
+    matchReason: metadata.matchReason,
+    similarity: metadata.similarity ?? null,
   };
 }
 
@@ -252,6 +297,67 @@ function scoreRecommendationScene(
   return score;
 }
 
+function buildRecommendationQuery(args: {
+  userLevel: Level;
+  learningGoal: string | null;
+  weakestSkill: WeakSkill;
+  goalCategories: SceneCategory[] | null;
+}) {
+  const skillNeed = {
+    grammar: 'complete sentence structure, clear questions, correct tense, and accurate grammar',
+    vocabulary: 'useful topic words, specific phrases, and richer vocabulary',
+    naturalness: 'natural conversation flow, polite replies, confidence, and small talk',
+  }[args.weakestSkill];
+  const categories = args.goalCategories?.join(', ') || 'mixed daily, social, travel, and work scenes';
+
+  return [
+    `Learner level: ${args.userLevel}`,
+    `Learning goal: ${args.learningGoal || 'GENERAL_ENGLISH'}`,
+    `Weak skill: ${args.weakestSkill}`,
+    `Needs practice: ${skillNeed}`,
+    `Prefer scene categories: ${categories}`,
+  ].join('\n');
+}
+
+function scoreSemanticRecommendation(input: {
+  similarity: number;
+  scene: { difficulty: Level; category: SceneCategory };
+  userLevel: Level;
+  weakestSkill: WeakSkill;
+  goalCategories: SceneCategory[] | null;
+}) {
+  const levelDistance = Math.abs(LEVEL_ORDER.indexOf(input.userLevel) - LEVEL_ORDER.indexOf(input.scene.difficulty));
+  const levelScore = Math.max(0, 1 - levelDistance * 0.25);
+  const skillMatch = SKILL_CATEGORY_PRIORITY[input.weakestSkill].includes(input.scene.category) ? 1 : 0.35;
+  const goalMatch = input.goalCategories
+    ? input.goalCategories.includes(input.scene.category) ? 1 : 0.25
+    : 0.6;
+
+  return input.similarity * 0.45
+    + skillMatch * 0.25
+    + levelScore * 0.15
+    + goalMatch * 0.10
+    + 0.05;
+}
+
+function buildRecommendationReason(weakestSkill: WeakSkill, retrievalMode: string) {
+  if (weakestSkill === 'grammar') {
+    return retrievalMode === 'HYBRID_VECTOR'
+      ? 'Phù hợp để luyện câu đầy đủ và sửa lỗi grammar dựa trên hồ sơ học của bạn.'
+      : 'Bạn đang cần củng cố grammar nên hệ thống ưu tiên scene có nhiều lượt hỏi/giải thích.';
+  }
+
+  if (weakestSkill === 'vocabulary') {
+    return retrievalMode === 'HYBRID_VECTOR'
+      ? 'Phù hợp để mở rộng từ vựng theo mục tiêu học và ngữ cảnh gần nhất.'
+      : 'Bạn đang cần mở rộng vocabulary nên hệ thống ưu tiên scene có nhiều từ/cụm hữu ích.';
+  }
+
+  return retrievalMode === 'HYBRID_VECTOR'
+    ? 'Phù hợp để luyện phản xạ tự nhiên và cách trả lời mượt hơn.'
+    : 'Bạn đang cần luyện naturalness nên hệ thống ưu tiên scene hội thoại đời thường.';
+}
+
 /**
  * Function Objective - listScenes
  * Summary: Lấy danh sách scene active theo filter và phân trang.
@@ -300,6 +406,27 @@ export async function searchScenes(userId: string, query: SearchScenesQuery) {
   }
 
   const allowedLevels = getAllowedLevels(user.level);
+  try {
+    const vectorMatches = await sceneEmbeddingsService.searchSimilarScenes({
+      query: query.q,
+      allowedLevels,
+      limit: query.limit,
+    });
+
+    if (vectorMatches.length > 0) {
+      return {
+        retrievalMode: 'VECTOR',
+        scenes: vectorMatches.map((scene) => mapSearchSceneCard(scene, {
+          retrievalMode: 'VECTOR',
+          similarity: scene.similarity,
+          matchReason: 'Semantic match for your search query.',
+        })),
+      };
+    }
+  } catch (error: any) {
+    console.warn(`[scenes] Vector search fallback: ${error?.message ?? error}`);
+  }
+
   const candidates = await scenesRepo.findSearchSceneCandidates(
     query.q,
     allowedLevels,
@@ -314,9 +441,12 @@ export async function searchScenes(userId: string, query: SearchScenesQuery) {
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || a.scene.title.localeCompare(b.scene.title))
     .slice(0, query.limit)
-    .map((item) => mapSceneCard(item.scene));
+    .map((item) => mapSearchSceneCard(item.scene, {
+      retrievalMode: 'TEXT_FALLBACK',
+      matchReason: 'Text match across scene title, mission, character, or vocabulary.',
+    }));
 
-  return { scenes };
+  return { retrievalMode: 'TEXT_FALLBACK', scenes };
 }
 
 /**
@@ -340,6 +470,51 @@ export async function recommendScenes(userId: string, query: RecommendScenesQuer
     .map((session) => session.sceneId)
     .filter((sceneId): sceneId is string => Boolean(sceneId));
 
+  try {
+    const vectorMatches = await sceneEmbeddingsService.searchSimilarScenes({
+      query: buildRecommendationQuery({
+        userLevel: user.level,
+        learningGoal: user.learningGoal,
+        weakestSkill,
+        goalCategories,
+      }),
+      allowedLevels,
+      limit: Math.max(query.limit * 3, 12),
+      excludeSceneIds: recentSceneIds,
+    });
+
+    if (vectorMatches.length > 0) {
+      const scenes = vectorMatches
+        .map((scene) => ({
+          score: scoreSemanticRecommendation({
+            similarity: scene.similarity,
+            scene,
+            userLevel: user.level,
+            weakestSkill,
+            goalCategories,
+          }),
+          scene,
+        }))
+        .sort((a, b) => b.score - a.score || a.scene.title.localeCompare(b.scene.title))
+        .slice(0, query.limit)
+        .map((item) => mapRecommendedSceneCard(item.scene, {
+          retrievalMode: 'HYBRID_VECTOR',
+          score: item.score,
+          focusSkill: weakestSkill,
+          matchReason: buildRecommendationReason(weakestSkill, 'HYBRID_VECTOR'),
+          similarity: item.scene.similarity,
+        }));
+
+      return {
+        retrievalMode: 'HYBRID_VECTOR',
+        focusSkill: getSkillLabel(weakestSkill),
+        scenes,
+      };
+    }
+  } catch (error: any) {
+    console.warn(`[scenes] Vector recommend fallback: ${error?.message ?? error}`);
+  }
+
   const primaryCandidates = await scenesRepo.findRecommendationSceneCandidates(
     allowedLevels,
     Math.max(query.limit * 3, 12),
@@ -361,9 +536,18 @@ export async function recommendScenes(userId: string, query: RecommendScenesQuer
     }))
     .sort((a, b) => b.score - a.score || a.scene.title.localeCompare(b.scene.title))
     .slice(0, query.limit)
-    .map((item) => mapSceneCard(item.scene));
+    .map((item) => mapRecommendedSceneCard(item.scene, {
+      retrievalMode: 'HEURISTIC_FALLBACK',
+      score: item.score,
+      focusSkill: weakestSkill,
+      matchReason: buildRecommendationReason(weakestSkill, 'HEURISTIC_FALLBACK'),
+    }));
 
-  return { scenes };
+  return {
+    retrievalMode: 'HEURISTIC_FALLBACK',
+    focusSkill: getSkillLabel(weakestSkill),
+    scenes,
+  };
 }
 
 /**

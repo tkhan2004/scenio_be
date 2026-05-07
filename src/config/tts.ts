@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { AiFeatureType, AiProvider } from '@prisma/client';
+import { getActiveAiFeatureModel } from '../modules/ai-models/ai-models.service';
 
 const DEFAULT_ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io/v1';
 const DEFAULT_ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5';
@@ -44,9 +46,12 @@ export async function synthesizeElevenLabsSpeech(input: {
   outputFormat?: string | null;
 }) {
   const apiKey = getRequiredEnv('ELEVENLABS_API_KEY');
+  const activeTtsModel = await getActiveAiFeatureModel(AiFeatureType.TTS);
   const baseUrl = normalizeBaseUrl(process.env.ELEVENLABS_BASE_URL || DEFAULT_ELEVENLABS_BASE_URL);
   const voiceId = input.voiceId?.trim() || DEFAULT_ELEVENLABS_VOICE_ID;
-  const modelId = input.modelId?.trim() || DEFAULT_ELEVENLABS_MODEL_ID;
+  const modelId = input.modelId?.trim()
+    || (activeTtsModel?.model.provider === AiProvider.ELEVENLABS ? activeTtsModel.model.modelId : null)
+    || DEFAULT_ELEVENLABS_MODEL_ID;
   const outputFormat = input.outputFormat?.trim() || DEFAULT_ELEVENLABS_OUTPUT_FORMAT;
 
   const response = await fetch(`${baseUrl}/text-to-speech/${voiceId}?output_format=${encodeURIComponent(outputFormat)}`, {
@@ -103,8 +108,11 @@ export async function synthesizeOpenAISpeech(input: {
   instructions?: string | null;
 }) {
   const apiKey = getRequiredEnv('OPENAI_API_KEY');
+  const activeTtsModel = await getActiveAiFeatureModel(AiFeatureType.TTS);
   const format = input.format?.trim() || DEFAULT_OPENAI_TTS_FORMAT;
-  const model = input.model?.trim() || DEFAULT_OPENAI_TTS_MODEL;
+  const model = input.model?.trim()
+    || (activeTtsModel?.model.provider === AiProvider.OPENAI ? activeTtsModel.model.modelId : null)
+    || DEFAULT_OPENAI_TTS_MODEL;
 
   const response = await fetch('https://api.openai.com/v1/audio/speech', {
     method: 'POST',

@@ -15,3 +15,6 @@ export * from './list-badges.schema';
 export * from './toggle-badge.schema';
 export * from './list-voices.schema';
 export * from './toggle-voice.schema';
+export * from './list-ai-models.schema';
+export * from './connect-ai-model.schema';
+export * from './benchmark-ai-model.schema';

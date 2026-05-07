@@ -1,6 +1,10 @@
 import { NextFunction, Request, Response } from 'express';
 import { ok } from '../../utils/response';
 import {
+  BenchmarkAiModelInput,
+  BenchmarkAiModelParams,
+  ConnectAiModelInput,
+  ConnectAiModelParams,
   CreateAdminMissionInput,
   CreateAdminSceneInput,
   GetAdminUserDetailParams,
@@ -8,6 +12,7 @@ import {
   GetAdminUserSessionsQuery,
   GetAdminSceneParams,
   GetAllUsersQuery,
+  ListAiModelsQuery,
   ListAdminScenesQuery,
   ToggleAdminBadgeInput,
   ToggleAdminBadgeParams,
@@ -293,6 +298,56 @@ export const toggleVoice = async (req: Request, res: Response, next: NextFunctio
     const params = (req as any).validatedParams as ToggleAdminVoiceParams;
     const input = (req as any).validatedBody as ToggleAdminVoiceInput;
     const result = await adminService.toggleVoice(params.id, input.isActive);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - listAiModels
+ * Summary: Trả về AI model catalog và active setting cho admin.
+ * Inputs: validatedQuery featureType optional.
+ * Behavior: Get query -> call service -> return response chuẩn.
+ */
+export const listAiModels = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const query = (req as any).validatedQuery as ListAiModelsQuery;
+    const result = await adminService.listAiModels(query);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - connectAiModel
+ * Summary: Connect và chọn active model cho feature tương ứng.
+ * Inputs: params.id và body outputDimension/config.
+ * Behavior: Benchmark nhanh -> lưu active setting -> trả setting mới.
+ */
+export const connectAiModel = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const params = (req as any).validatedParams as ConnectAiModelParams;
+    const input = (req as any).validatedBody as ConnectAiModelInput;
+    const result = await adminService.connectAiModel(params.id, input);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - benchmarkAiModel
+ * Summary: Benchmark model để admin so sánh trước khi chọn.
+ * Inputs: params.id và body sampleText/outputDimension.
+ * Behavior: Call service benchmark -> trả latency/dimension.
+ */
+export const benchmarkAiModel = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const params = (req as any).validatedParams as BenchmarkAiModelParams;
+    const input = (req as any).validatedBody as BenchmarkAiModelInput;
+    const result = await adminService.benchmarkAiModel(params.id, input);
     ok(res, result);
   } catch (error) {
     next(error);

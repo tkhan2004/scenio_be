@@ -36,13 +36,14 @@ model User {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
-  sessions       Session[]
+  sessions              Session[]
   customPracticeConfigs CustomPracticeConfig[]
-  userMissions   UserMission[]
-  userBadges     UserBadge[]
-  userVocabulary UserVocabulary[]
+  learningPlans         LearningPlan[]
+  userMissions          UserMission[]
+  userBadges            UserBadge[]
+  userVocabulary        UserVocabulary[]
   vocabularyOccurrences UserVocabularyOccurrence[]
-  refreshTokens  RefreshToken[]
+  refreshTokens         RefreshToken[]
 
   @@map("users")
 }
@@ -78,11 +79,31 @@ model Scene {
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  vocabulary SceneVocabulary[]
-  sessions   Session[]
+  vocabulary  SceneVocabulary[]
+  sessions    Session[]
   voicePreset SceneVoicePreset?
+  embedding   SceneEmbedding?
+  planSteps   LearningPlanStep[]
 
   @@map("scenes")
+}
+
+model SceneEmbedding {
+  id              String     @id @default(uuid())
+  sceneId         String     @unique
+  provider        AiProvider
+  modelId         String
+  outputDimension Int
+  embeddingText   String     @db.Text
+  embeddingHash   String
+  metadata        Json?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  scene Scene @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+
+  @@index([provider, modelId])
+  @@map("scene_embeddings")
 }
 
 model SceneVocabulary {
@@ -123,9 +144,9 @@ model VoiceProfile {
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  defaultScenePresets       SceneVoicePreset[] @relation("DefaultVoicePreset")
-  defaultMaleScenePresets   SceneVoicePreset[] @relation("MaleVoicePreset")
-  defaultFemaleScenePresets SceneVoicePreset[] @relation("FemaleVoicePreset")
+  defaultScenePresets       SceneVoicePreset[]     @relation("DefaultVoicePreset")
+  defaultMaleScenePresets   SceneVoicePreset[]     @relation("MaleVoicePreset")
+  defaultFemaleScenePresets SceneVoicePreset[]     @relation("FemaleVoicePreset")
   sessions                  Session[]
   customPracticeConfigs     CustomPracticeConfig[]
 
@@ -133,8 +154,8 @@ model VoiceProfile {
 }
 
 model SceneVoicePreset {
-  id                   String  @id @default(uuid())
-  sceneId              String  @unique
+  id                   String   @id @default(uuid())
+  sceneId              String   @unique
   defaultVoiceId       String?
   defaultMaleVoiceId   String?
   defaultFemaleVoiceId String?
@@ -154,31 +175,31 @@ model SceneVoicePreset {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Session {
-  id               String        @id @default(uuid())
-  userId           String
-  sceneId          String?
+  id                     String            @id @default(uuid())
+  userId                 String
+  sceneId                String?
   customPracticeConfigId String?
-  sourceType       SessionSourceType @default(CURATED_SCENE)
-  voiceProfileId   String?
-  voiceProvider    VoiceProvider?
-  voiceSnapshotName String?
-  providerSessionId String?
-  modality         SessionModality @default(TEXT)
-  status           SessionStatus @default(ACTIVE)
-  grammarScore     Float?
-  vocabularyScore  Float?
-  naturalnessScore Float?
-  xpEarned         Int           @default(0)
-  xpGrantedAt      DateTime?
-  hintCount        Int           @default(0) // tổng số lần dùng hint trong session
-  startedAt        DateTime      @default(now())
-  endedAt          DateTime?
+  sourceType             SessionSourceType @default(CURATED_SCENE)
+  voiceProfileId         String?
+  voiceProvider          VoiceProvider?
+  voiceSnapshotName      String?
+  providerSessionId      String?
+  modality               SessionModality   @default(TEXT)
+  status                 SessionStatus     @default(ACTIVE)
+  grammarScore           Float?
+  vocabularyScore        Float?
+  naturalnessScore       Float?
+  xpEarned               Int               @default(0)
+  xpGrantedAt            DateTime?
+  hintCount              Int               @default(0) // tổng số lần dùng hint trong session
+  startedAt              DateTime          @default(now())
+  endedAt                DateTime?
 
-  user     User      @relation(fields: [userId], references: [id])
-  scene    Scene?    @relation(fields: [sceneId], references: [id])
-  customPracticeConfig CustomPracticeConfig? @relation(fields: [customPracticeConfigId], references: [id], onDelete: SetNull)
-  voiceProfile VoiceProfile? @relation(fields: [voiceProfileId], references: [id], onDelete: SetNull)
-  messages Message[]
+  user                  User                       @relation(fields: [userId], references: [id])
+  scene                 Scene?                     @relation(fields: [sceneId], references: [id])
+  customPracticeConfig  CustomPracticeConfig?      @relation(fields: [customPracticeConfigId], references: [id], onDelete: SetNull)
+  voiceProfile          VoiceProfile?              @relation(fields: [voiceProfileId], references: [id], onDelete: SetNull)
+  messages              Message[]
   vocabularyOccurrences UserVocabularyOccurrence[]
 
   @@index([userId])
@@ -190,51 +211,51 @@ model Session {
 }
 
 model CustomPracticeConfig {
-  id                    String     @id @default(uuid())
-  userId                String
-  practiceGoal          String
-  successOutcome        String?
-  topicSummary          String
-  contextType           String
-  location              String?
-  conversationChannel   String
-  timePressure          String?
-  specialConditions     String[]   @default([])
-  userRole              String
-  userIntent            String?
-  userEnglishLevel      Level?
-  userPersonaNotes      String?
-  aiRole                String
-  aiDisplayName         String
-  aiRelationshipToUser  String?
-  aiPrimaryGoal         String?
-  aiBehaviorStyle       String?
-  aiGenderPresentation  VoiceGender @default(NEUTRAL)
-  aiVoicePresetId       String?
-  aiVoiceTone           String?
-  aiSpeechSpeed         String?
-  aiAccentPreference    String?
-  difficulty            Level      @default(A2)
-  conversationLength    String?
-  correctionStyle       String?
-  hintFrequency         String?
-  responseComplexity    String?
-  focusSkills           String[]   @default([])
-  mustUseVocabulary     String[]   @default([])
-  avoidTopics           String[]   @default([])
-  customInstructions    String?
-  displayTitle          String
-  displaySubtitle       String
-  missionText           String
-  estimatedMinutes      Int        @default(10)
-  openingMessage        String     @db.Text
-  systemPrompt          String     @db.Text
-  createdAt             DateTime   @default(now())
-  updatedAt             DateTime   @updatedAt
+  id                   String      @id @default(uuid())
+  userId               String
+  practiceGoal         String
+  successOutcome       String?
+  topicSummary         String
+  contextType          String
+  location             String?
+  conversationChannel  String
+  timePressure         String?
+  specialConditions    String[]    @default([])
+  userRole             String
+  userIntent           String?
+  userEnglishLevel     Level?
+  userPersonaNotes     String?
+  aiRole               String
+  aiDisplayName        String
+  aiRelationshipToUser String?
+  aiPrimaryGoal        String?
+  aiBehaviorStyle      String?
+  aiGenderPresentation VoiceGender @default(NEUTRAL)
+  aiVoicePresetId      String?
+  aiVoiceTone          String?
+  aiSpeechSpeed        String?
+  aiAccentPreference   String?
+  difficulty           Level       @default(A2)
+  conversationLength   String?
+  correctionStyle      String?
+  hintFrequency        String?
+  responseComplexity   String?
+  focusSkills          String[]    @default([])
+  mustUseVocabulary    String[]    @default([])
+  avoidTopics          String[]    @default([])
+  customInstructions   String?
+  displayTitle         String
+  displaySubtitle      String
+  missionText          String
+  estimatedMinutes     Int         @default(10)
+  openingMessage       String      @db.Text
+  systemPrompt         String      @db.Text
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
 
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   aiVoicePreset VoiceProfile? @relation(fields: [aiVoicePresetId], references: [id], onDelete: SetNull)
-  sessions     Session[]
+  sessions      Session[]
 
   @@index([userId])
   @@index([aiVoicePresetId])
@@ -242,11 +263,11 @@ model CustomPracticeConfig {
 }
 
 model Message {
-  id        String      @id @default(uuid())
-  sessionId String
-  role      MessageRole
-  content   String      @db.Text
-  turnIndex Int
+  id              String          @id @default(uuid())
+  sessionId       String
+  role            MessageRole
+  content         String          @db.Text
+  turnIndex       Int
   providerEventId String?
   modality        MessageModality @default(TEXT)
   audioStartMs    Int?
@@ -254,13 +275,14 @@ model Message {
   isFinal         Boolean         @default(true)
 
   // Feedback — tách cột riêng thay vì JSON blob để dễ query & thống kê lỗi
-  hasError       Boolean?
-  errorType      ErrorType?
-  originalPhrase String?
-  suggestion     String?
-  explanation    String? // giải thích tiếng Việt, tối đa ~15 từ
-  isGood         Boolean?
-  isHint         Boolean    @default(false) // true nếu là tin nhắn hint từ AI
+  hasError        Boolean?
+  errorType       ErrorType?
+  originalPhrase  String?
+  suggestion      String?
+  explanation     String? // giải thích tiếng Việt, tối đa ~15 từ
+  isGood          Boolean?
+  feedbackDetails Json?
+  isHint          Boolean    @default(false) // true nếu là tin nhắn hint từ AI
 
   createdAt DateTime @default(now())
 
@@ -366,8 +388,8 @@ model UserVocabulary {
   lastSeenAt      DateTime  @default(now())
   reviewedAt      DateTime?
 
-  user            User             @relation(fields: [userId], references: [id])
-  sceneVocabulary SceneVocabulary? @relation(fields: [sceneVocabularyId], references: [id])
+  user            User                       @relation(fields: [userId], references: [id])
+  sceneVocabulary SceneVocabulary?           @relation(fields: [sceneVocabularyId], references: [id])
   occurrences     UserVocabularyOccurrence[]
 
   @@unique([userId, normalizedWord])
@@ -395,6 +417,123 @@ model UserVocabularyOccurrence {
   @@index([sessionId])
   @@index([userVocabularyId])
   @@map("user_vocabulary_occurrences")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI MODEL CATALOG & FEATURE SETTINGS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AiModelCatalog {
+  id               String        @id @default(uuid())
+  featureType      AiFeatureType
+  provider         AiProvider
+  modelId          String
+  displayName      String
+  description      String?
+  inputModalities  String[]      @default([])
+  outputType       String
+  dimensionOptions Int[]         @default([])
+  defaultDimension Int?
+  config           Json?
+  isActive         Boolean       @default(true)
+  isSystem         Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  activeSettings AiFeatureSetting[]
+  benchmarks     AiModelBenchmark[]
+
+  @@unique([featureType, provider, modelId])
+  @@index([featureType, isActive])
+  @@map("ai_model_catalog")
+}
+
+model AiFeatureSetting {
+  id               String        @id @default(uuid())
+  featureType      AiFeatureType @unique
+  activeModelId    String?
+  fallbackModelIds String[]      @default([])
+  outputDimension  Int?
+  config           Json?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  activeModel AiModelCatalog? @relation(fields: [activeModelId], references: [id], onDelete: SetNull)
+
+  @@map("ai_feature_settings")
+}
+
+model AiModelBenchmark {
+  id                 String        @id @default(uuid())
+  modelCatalogId     String
+  featureType        AiFeatureType
+  provider           AiProvider
+  providerModelId    String
+  sampleText         String        @db.Text
+  outputDimension    Int?
+  embeddingDimension Int?
+  latencyMs          Int
+  success            Boolean
+  errorMessage       String?
+  createdAt          DateTime      @default(now())
+
+  modelCatalog AiModelCatalog @relation(fields: [modelCatalogId], references: [id], onDelete: Cascade)
+
+  @@index([featureType, createdAt])
+  @@index([modelCatalogId, createdAt])
+  @@map("ai_model_benchmarks")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LEARNING PLAN
+// ─────────────────────────────────────────────────────────────────────────────
+
+model LearningPlan {
+  id             String             @id @default(uuid())
+  userId         String
+  status         LearningPlanStatus @default(ACTIVE)
+  title          String
+  summary        String             @db.Text
+  level          Level
+  learningGoal   String?
+  studyFrequency String?
+  focusSkill     LearningFocusSkill
+  weeklyTarget   Int
+  generatedBy    String             @default("RULE")
+  sourceSnapshot Json?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  user  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  steps LearningPlanStep[]
+
+  @@index([userId, status])
+  @@map("learning_plans")
+}
+
+model LearningPlanStep {
+  id             String                 @id @default(uuid())
+  planId         String
+  sceneId        String?
+  type           LearningPlanStepType
+  status         LearningPlanStepStatus @default(LOCKED)
+  focusSkill     LearningFocusSkill
+  title          String
+  description    String?
+  reason         String?
+  sortOrder      Int
+  targetCount    Int                    @default(1)
+  completedCount Int                    @default(0)
+  metadata       Json?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  plan  LearningPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  scene Scene?       @relation(fields: [sceneId], references: [id], onDelete: SetNull)
+
+  @@index([planId, status])
+  @@index([sceneId])
+  @@map("learning_plan_steps")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -472,4 +611,48 @@ enum ConditionType {
   VOCAB_SAVED // tổng từ đã lưu >= conditionValue
   FIRST_SESSION // hoàn thành session đầu tiên (conditionValue = 1)
   PERFECT_SCORE // đạt 100 điểm (conditionValue = 100)
+}
+
+enum AiFeatureType {
+  EMBEDDING
+  ROLEPLAY_LLM
+  EVALUATOR_LLM
+  REALTIME_VOICE
+  TTS
+  STT
+}
+
+enum AiProvider {
+  GOOGLE
+  OPENAI
+  ANTHROPIC
+  ELEVENLABS
+}
+
+enum LearningPlanStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum LearningPlanStepStatus {
+  LOCKED
+  NEXT
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
+enum LearningPlanStepType {
+  SCENE
+  VOCABULARY_REVIEW
+  GRAMMAR_PRACTICE
+  RETRY_SCENE
+  CUSTOM_PRACTICE
+}
+
+enum LearningFocusSkill {
+  GRAMMAR
+  VOCABULARY
+  NATURALNESS
+  CONFIDENCE
 }

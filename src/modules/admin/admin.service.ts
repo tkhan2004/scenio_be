@@ -1,10 +1,15 @@
-import { Level, SceneCategory } from '@prisma/client';
+import { Level, Prisma, SceneCategory } from '@prisma/client';
 import * as adminRepo from './admin.repository';
+import * as aiModelsService from '../ai-models/ai-models.service';
+import * as sceneEmbeddingsService from '../scene-embeddings/scene-embeddings.service';
 import {
+  BenchmarkAiModelInput,
+  ConnectAiModelInput,
   CreateAdminMissionInput,
   CreateAdminSceneInput,
   GetAdminUserSessionsQuery,
   GetAllUsersQuery,
+  ListAiModelsQuery,
   ListAdminScenesQuery,
   UpdateAdminMissionInput,
   UpdateAdminSceneInput,
@@ -617,6 +622,8 @@ export async function createScene(input: CreateAdminSceneInput) {
   }
 
   const detail = mapAdminSceneDetail(scene);
+  await sceneEmbeddingsService.upsertSceneEmbeddingBestEffort(detail.scene.id);
+
   return {
     scene: detail.scene,
     vocabulary: detail.vocabulary,
@@ -662,6 +669,8 @@ export async function updateScene(sceneId: string, input: UpdateAdminSceneInput)
   }
 
   const detail = mapAdminSceneDetail(scene);
+  await sceneEmbeddingsService.upsertSceneEmbeddingBestEffort(detail.scene.id);
+
   return {
     scene: detail.scene,
     vocabulary: detail.vocabulary,
@@ -685,7 +694,12 @@ export async function toggleScene(sceneId: string, isActive: boolean) {
     });
   }
 
-  return adminRepo.toggleAdminScene(sceneId, isActive);
+  const scene = await adminRepo.toggleAdminScene(sceneId, isActive);
+  if (isActive) {
+    await sceneEmbeddingsService.upsertSceneEmbeddingBestEffort(scene.id);
+  }
+
+  return scene;
 }
 
 /**
@@ -823,4 +837,39 @@ export async function toggleVoice(voiceId: string, isActive: boolean) {
   return {
     voice,
   };
+}
+
+/**
+ * Function Objective - listAiModels
+ * Summary: Lấy AI model catalog và active setting cho màn admin model settings.
+ * Inputs: Optional featureType filter.
+ * Returns: Danh sách model và setting hiện hành theo feature.
+ */
+export async function listAiModels(query: ListAiModelsQuery) {
+  return aiModelsService.listAiModels(query.featureType);
+}
+
+/**
+ * Function Objective - connectAiModel
+ * Summary: Test provider và chọn model làm active cho feature tương ứng.
+ * Inputs: model id, outputDimension/config optional.
+ * Returns: Active setting mới và benchmark connect.
+ */
+export async function connectAiModel(modelId: string, input: ConnectAiModelInput) {
+  return aiModelsService.connectAiModel(modelId, {
+    outputDimension: input.outputDimension,
+    fallbackModelIds: input.fallbackModelIds,
+    benchmarkText: input.benchmarkText,
+    config: input.config as Prisma.InputJsonValue | undefined,
+  });
+}
+
+/**
+ * Function Objective - benchmarkAiModel
+ * Summary: Chạy benchmark model mà chưa thay đổi active setting.
+ * Inputs: model id, sample text, outputDimension.
+ * Returns: Kết quả benchmark để admin so sánh latency/dimension.
+ */
+export async function benchmarkAiModel(modelId: string, input: BenchmarkAiModelInput) {
+  return aiModelsService.benchmarkAiModel(modelId, input);
 }
