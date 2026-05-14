@@ -58,7 +58,7 @@ export async function createRealtimeClientSecret(input: {
         type: 'realtime',
         model,
         instructions: input.instructions,
-        output_modalities: ['audio', 'text'],
+        output_modalities: ['audio'],
         audio: {
           input: {
             format: {
@@ -71,8 +71,11 @@ export async function createRealtimeClientSecret(input: {
             },
             turn_detection: {
               type: 'server_vad',
-              create_response: true,
-              interrupt_response: true,
+              threshold: 0.72,
+              prefix_padding_ms: 240,
+              silence_duration_ms: 980,
+              create_response: false,
+              interrupt_response: false,
             },
           },
           output: {

@@ -60,6 +60,8 @@ Scenio session rules:
 - If the learner struggles, simplify your wording while staying in character.
 - Avoid long monologues.
 - Ask at most one clear question at a time.
+- After each reply, stop speaking and wait for the learner's next turn.
+- Never create multiple back-to-back replies for one learner utterance.
 - Do not output stage directions, labels, or markdown.
 - Do not mention transcription, latency, or backend systems.
 
@@ -128,7 +130,7 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
       voice: realtime.voice,
       transcriptionModel,
       turnDetection: 'server_vad',
-      outputModalities: ['audio', 'text'],
+      outputModalities: ['audio'],
       instructions,
       transport: voiceContract.transport,
       transcriptStrategy: voiceContract.transcriptStrategy,
