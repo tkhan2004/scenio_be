@@ -38,10 +38,15 @@
 | 7 | GET | `/home/dashboard` | ✓ | Tải dữ liệu tổng hợp (Trang chủ) | ✅ Done |
 | **SCENES** |
 | 8 | GET | `/scenes` | ✓ | Danh sách kịch bản (filter, paginate) | ✅ Done |
-| 9 | GET | `/scenes/search` | ✓ | Tìm kiếm kịch bản theo từ khóa | ✅ Done |
-| 10 | GET | `/scenes/recommend` | ✓ | Gợi ý kịch bản theo điểm yếu | ✅ Done |
+| 9 | GET | `/scenes/search` | ✓ | Tìm kiếm semantic bằng pgvector, fallback text search | ✅ Done |
+| 10 | GET | `/scenes/recommend` | ✓ | Gợi ý hybrid vector + learning data, fallback heuristic | ✅ Done |
 | 11 | GET | `/scenes/:id` | ✓ | Chi tiết kịch bản đầy đủ | ✅ Done |
 | 11a | GET | `/scenes/:id/voices` | ✓ | Quick-pick voices và advanced voice catalog cho scene | ✅ Done |
+| **LEARNING PLAN** |
+| 11b | GET | `/learning-plan/current` | ✓ | Lấy/tự tạo lộ trình học active cho user | ✅ Done |
+| 11c | POST | `/learning-plan/generate` | ✓ | Tạo lộ trình mới từ onboarding, level test, session history | ✅ Done |
+| 11d | POST | `/learning-plan/refresh` | ✓ | Archive plan cũ và tạo lộ trình mới | ✅ Done |
+| 11e | PATCH | `/learning-plan/steps/:id/complete` | ✓ | Đánh dấu một bước trong lộ trình đã hoàn thành | ✅ Done |
 | **SESSIONS** |
 | 12 | POST | `/sessions/level-test` | ✓ | Bài kiểm tra trình độ AI (5 lượt) | ✅ Done |
 | 13 | POST | `/sessions/start` | ✓ | Bắt đầu phiên học mới | ✅ Done |
@@ -73,6 +78,9 @@
 | 28 | GET | `/voices/:id` | ✓ | Chi tiết một voice profile active | ✅ Done |
 | 29 | POST | `/voices/preview` | ✓ | Sinh audio preview cho voice profile | ✅ Done |
 | **ADMIN** |
+| 30q | GET | `/admin/ai-models` | ✓ | AI model catalog và active setting theo feature | ✅ Done |
+| 30r | POST | `/admin/ai-models/:id/benchmark` | ✓ | Benchmark model để so sánh latency/output | ✅ Done |
+| 30s | PATCH | `/admin/ai-models/:id/connect` | ✓ | Connect và chọn model active cho feature | ✅ Done |
 | 30a | GET | `/admin/overview` | ✓ | KPI và chart data cho admin dashboard | ✅ Done |
 | 30 | GET | `/admin/users` | ✓ | Danh sách learner cho admin dashboard | ✅ Done |
 | 30g | GET | `/admin/users/:id` | ✓ | Chi tiết learner cho admin drawer | ✅ Done |
@@ -184,6 +192,7 @@ Lấy danh sách scene active, hỗ trợ filter và phân trang.
   "success": true,
   "status": 200,
   "data": {
+    "retrievalMode": "VECTOR",
     "scenes": [
       {
         "id": "uuid",
@@ -204,7 +213,7 @@ Lấy danh sách scene active, hỗ trợ filter và phân trang.
 ```
 
 ### 9. GET `/scenes/search`
-Tìm scene theo từ khóa cho user hiện tại. Bản hiện tại dùng text search trong PostgreSQL; vector search sẽ được nâng cấp sau nhưng vẫn giữ nguyên route và response shape.
+Tìm scene cho user hiện tại. Backend ưu tiên semantic search bằng pgvector; nếu chưa có embedding key, chưa backfill vector, hoặc pgvector không khả dụng thì tự fallback về text search PostgreSQL.
 
 **Query**
 - `q`: từ khóa tìm kiếm
@@ -225,7 +234,10 @@ Tìm scene theo từ khóa cho user hiện tại. Bản hiện tại dùng text 
         "difficulty": "A2",
         "estimatedMinutes": 7,
         "characterName": "David",
-        "characterRole": "Check-in Staff"
+        "characterRole": "Check-in Staff",
+        "retrievalMode": "VECTOR",
+        "similarity": 0.86,
+        "matchReason": "Matched semantically by pgvector"
       }
     ]
   }
@@ -233,16 +245,17 @@ Tìm scene theo từ khóa cho user hiện tại. Bản hiện tại dùng text 
 ```
 
 ### 10. GET `/scenes/recommend`
-Gợi ý scene cho bước học tiếp theo dựa trên heuristic DB-only. Bản hiện tại chưa dùng Chroma/vector search nhưng đã giữ sẵn route và response shape ổn định cho frontend.
+Gợi ý scene cho bước học tiếp theo dựa trên level, goal, session history, weak skill và semantic vector. Nếu vector search lỗi hoặc chưa có embedding data thì fallback về heuristic DB-only.
 
 **Query**
 - `limit`: số kết quả tối đa, mặc định `5`, tối đa `20`
 
-**Logic hiện tại**
+**Logic**
 - Lấy 5 completed sessions gần nhất của user.
 - Suy ra skill yếu nhất từ `grammar`, `vocabulary`, `naturalness`.
 - Fallback sang `selfAssessment` nếu user chưa có completed session.
-- Rank scene theo `learningGoal`, category ưu tiên theo weak skill, độ gần level và vocabulary count.
+- Build query học tập từ level, goal và weak skill để search pgvector.
+- Rank scene theo vector similarity + `learningGoal`, category ưu tiên theo weak skill, độ gần level và vocabulary count.
 
 **Response 200**
 ```json
@@ -250,6 +263,8 @@ Gợi ý scene cho bước học tiếp theo dựa trên heuristic DB-only. Bả
   "success": true,
   "status": 200,
   "data": {
+    "retrievalMode": "HYBRID_VECTOR",
+    "focusSkill": "VOCABULARY",
     "scenes": [
       {
         "id": "uuid",
@@ -259,12 +274,96 @@ Gợi ý scene cho bước học tiếp theo dựa trên heuristic DB-only. Bả
         "difficulty": "A2",
         "estimatedMinutes": 6,
         "characterName": "Jake",
-        "characterRole": "Waiter"
+        "characterRole": "Waiter",
+        "retrievalMode": "HYBRID_VECTOR",
+        "focusSkill": "VOCABULARY",
+        "score": 0.78,
+        "matchReason": "Recommended from weak skill, level fit, and vector similarity"
       }
     ]
   }
 }
 ```
+
+### 11b. GET `/learning-plan/current`
+Lấy active learning plan hiện tại. Nếu user chưa có plan, backend tự generate một plan rule-based từ onboarding, level, session history và scene recommendation.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "plan": {
+      "id": "uuid",
+      "status": "ACTIVE",
+      "title": "A2 travel speaking plan",
+      "summary": "Focus on vocabulary with 4 practice sessions this week.",
+      "level": "A2",
+      "learningGoal": "TRAVEL",
+      "studyFrequency": "4 times/week",
+      "focusSkill": "VOCABULARY",
+      "weeklyTarget": 4,
+      "generatedBy": "RULE",
+      "sourceSnapshot": {
+        "selfAssessment": "VOCABULARY",
+        "recentSessionCount": 3
+      }
+    },
+    "steps": [
+      {
+        "id": "uuid",
+        "sceneId": "uuid",
+        "type": "SCENE",
+        "status": "NEXT",
+        "focusSkill": "VOCABULARY",
+        "title": "Airport Check-in",
+        "description": "Check in luggage and ask about gate, boarding time, and seat.",
+        "reason": "Recommended from weak skill, level fit, and vector similarity",
+        "sortOrder": 1,
+        "targetCount": 1,
+        "completedCount": 0,
+        "metadata": {
+          "retrievalMode": "HYBRID_VECTOR",
+          "score": 0.78,
+          "similarity": 0.84
+        },
+        "scene": {
+          "id": "uuid",
+          "title": "Airport Check-in",
+          "category": "TRAVEL",
+          "difficulty": "A2",
+          "estimatedMinutes": 7,
+          "characterName": "David",
+          "characterRole": "Check-in Staff"
+        }
+      }
+    ],
+    "nextStep": {
+      "id": "uuid",
+      "type": "SCENE",
+      "sceneId": "uuid",
+      "title": "Airport Check-in",
+      "focusSkill": "VOCABULARY"
+    }
+  }
+}
+```
+
+### 11c. POST `/learning-plan/generate`
+Archive active plan cũ và tạo một learning plan mới. Dùng khi user vừa hoàn tất onboarding/level test hoặc muốn tạo lại lộ trình từ dữ liệu hiện tại.
+
+**Response 201:** cùng shape với `GET /learning-plan/current`.
+
+### 11d. POST `/learning-plan/refresh`
+Làm mới lộ trình chủ động từ client. Backend archive plan cũ rồi generate plan mới.
+
+**Response 200:** cùng shape với `GET /learning-plan/current`.
+
+### 11e. PATCH `/learning-plan/steps/:id/complete`
+Đánh dấu một step thuộc plan của user là completed. Backend tự unlock step kế tiếp nếu cần.
+
+**Response 200:** cùng shape với `GET /learning-plan/current`.
 
 ### 11. GET `/scenes/:id`
 Lấy chi tiết đầy đủ của một scene active để hiển thị màn hình scene detail.
@@ -951,6 +1050,7 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
         "suggestion": null,
         "explanation": null,
         "isGood": null,
+        "feedbackDetails": null,
         "isHint": false,
         "createdAt": "2026-04-02T10:00:00.000Z"
       }
@@ -995,6 +1095,14 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
         "questionCount": 2
       },
       "note": "Đây là coaching dựa trên transcript và cách diễn đạt, chưa phải chấm phát âm."
+    },
+    "nextLearningAction": {
+      "type": "GRAMMAR_PRACTICE",
+      "focus": "GRAMMAR",
+      "title": "Practice cleaner sentence structure",
+      "reason": "Grammar is your lowest score (72) with 2 grammar issue(s).",
+      "ctaLabel": "Practice grammar",
+      "suggestedSceneQuery": "Airport Check-in grammar follow-up"
     }
   }
 }
@@ -1325,6 +1433,93 @@ Sinh audio preview cho voice profile được chọn.
 - Ưu tiên synth preview bằng ElevenLabs nếu voice profile có `providerVoiceId`.
 - Nếu ElevenLabs không khả dụng, backend fallback sang OpenAI TTS bằng `realtimeVoiceId`.
 - Response là binary audio stream.
+
+### 30q. GET `/admin/ai-models`
+Lấy catalog AI model cho admin chọn provider/model theo feature.
+
+**Query**
+- `featureType`: `EMBEDDING | ROLEPLAY_LLM | EVALUATOR_LLM | REALTIME_VOICE | TTS | STT` (optional)
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "settings": [
+      {
+        "featureType": "EMBEDDING",
+        "outputDimension": 1536,
+        "activeModel": {
+          "provider": "GOOGLE",
+          "modelId": "gemini-embedding-2",
+          "displayName": "Gemini Embedding 2"
+        },
+        "fallbackModels": [
+          {
+            "provider": "OPENAI",
+            "modelId": "text-embedding-3-small",
+            "displayName": "OpenAI Text Embedding 3 Small"
+          }
+        ]
+      }
+    ],
+    "models": [
+      {
+        "id": "uuid",
+        "featureType": "EMBEDDING",
+        "provider": "GOOGLE",
+        "modelId": "gemini-embedding-2",
+        "displayName": "Gemini Embedding 2",
+        "inputModalities": ["TEXT", "IMAGE", "AUDIO", "VIDEO", "PDF"],
+        "outputType": "EMBEDDING",
+        "dimensionOptions": [128, 768, 1536, 3072],
+        "defaultDimension": 1536,
+        "isSelected": true,
+        "isFallback": false
+      }
+    ]
+  }
+}
+```
+
+### 30r. POST `/admin/ai-models/:id/benchmark`
+Benchmark model mà không đổi active setting.
+
+**Body**
+```json
+{
+  "sampleText": "recommend a travel scene for airport check-in",
+  "outputDimension": 1536
+}
+```
+
+**Ghi chú**
+- Với `featureType = EMBEDDING`, backend gọi provider thật và lưu latency/dimension.
+- Gemini default hiện tại là `gemini-embedding-2` qua Gemini API.
+- Với `ROLEPLAY_LLM` và `EVALUATOR_LLM`, backend gọi provider text thật bằng prompt ngắn và lưu latency.
+- Với `REALTIME_VOICE`, `TTS`, và `STT`, backend kiểm tra provider/runtime readiness ở mức server-side.
+
+### 30s. PATCH `/admin/ai-models/:id/connect`
+Benchmark nhanh rồi chọn model làm active cho feature tương ứng.
+
+**Body**
+```json
+{
+  "outputDimension": 1536,
+  "fallbackModelIds": ["uuid-openai-fallback", "uuid-gemini-fallback"],
+  "benchmarkText": "find a daily English speaking scene",
+  "config": {}
+}
+```
+
+**Behavior**
+- Nếu benchmark/connect thất bại, backend không đổi active setting.
+- Nếu thành công, ghi vào `ai_feature_settings`.
+- Embedding active setting sẽ được `src/config/embedding.ts` dùng để sinh vector.
+- `fallbackModelIds` phải cùng `featureType`, đang active, và không được trùng primary model.
+- Embedding, roleplay, evaluator, realtime/STT/TTS runtime đọc primary + fallback chain theo thứ tự admin cấu hình.
+- Catalog seed hiện có các nhóm production/research-friendly: OpenAI GPT-5.x/GPT-4.1, Anthropic Claude 4.x/3.5, Google Gemini 3/2.5, OpenAI/Gemini embeddings, OpenAI realtime/STT/TTS, ElevenLabs TTS.
 
 ### 30a. GET `/admin/overview`
 Lấy dữ liệu tổng quan cho admin dashboard, gồm KPI cards, level distribution, recent learners, và sessions by day.
