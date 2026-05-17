@@ -191,6 +191,18 @@ export async function findSessionForXpGrant(userId: string, sessionId: string, d
       xpEarned: true,
       xpGrantedAt: true,
       endedAt: true,
+      sourceType: true,
+      sceneId: true,
+      scene: {
+        select: {
+          title: true,
+        },
+      },
+      customPracticeConfig: {
+        select: {
+          displayTitle: true,
+        },
+      },
     },
   });
 }

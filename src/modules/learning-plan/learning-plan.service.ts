@@ -1,11 +1,21 @@
-import { ErrorType, LearningFocusSkill, LearningPlanStepStatus, LearningPlanStepType, Level, Prisma } from '@prisma/client';
+import {
+  ErrorType,
+  LearningFocusSkill,
+  LearningPlanStepStatus,
+  LearningPlanStepType,
+  Level,
+  NotificationType,
+  Prisma,
+} from '@prisma/client';
 import prisma from '../../config/database';
 import { CompleteLearningPlanStepParams } from '../../schemas/learning-plan';
+import * as notificationsService from '../notifications/notifications.service';
 import * as scenesService from '../scenes/scenes.service';
 import * as learningPlanRepo from './learning-plan.repository';
 
 type PlanRecord = learningPlanRepo.LearningPlanRecord;
 type RecentPlanSession = Awaited<ReturnType<typeof learningPlanRepo.findRecentSessionsForPlan>>[number];
+type LearningPlanNotificationKind = 'LEARNING_PLAN_READY' | 'LEARNING_PLAN_REFRESHED';
 
 const STUDY_FREQUENCY_WEEKLY_TARGET: Record<string, number> = {
   LIGHT: 2,
@@ -158,14 +168,20 @@ export async function getCurrentLearningPlan(userId: string) {
   const existing = await learningPlanRepo.findActiveLearningPlan(userId);
   if (existing) return mapPlan(existing);
 
-  return generateLearningPlan(userId);
+  return generateLearningPlan(userId, { notify: false });
 }
 
 /**
  * Function Objective - generateLearningPlan
  * Summary: Tạo active learning plan từ onboarding, level, session history, và recommend scenes.
  */
-export async function generateLearningPlan(userId: string) {
+export async function generateLearningPlan(
+  userId: string,
+  options: {
+    notify?: boolean;
+    notificationType?: LearningPlanNotificationKind;
+  } = {},
+) {
   const [user, recentSessions] = await Promise.all([
     learningPlanRepo.findUserLearningContext(userId),
     learningPlanRepo.findRecentSessionsForPlan(userId, 5),
@@ -215,11 +231,29 @@ export async function generateLearningPlan(userId: string) {
     }, tx);
   });
 
-  return mapPlan(plan);
+  const mappedPlan = mapPlan(plan);
+
+  if (options.notify) {
+    await notificationsService.createLearningPlanNotification({
+      userId,
+      type: options.notificationType ?? NotificationType.LEARNING_PLAN_READY,
+      plan: {
+        id: mappedPlan.plan.id,
+        title: mappedPlan.plan.title,
+        focusSkill: mappedPlan.plan.focusSkill,
+        weeklyTarget: mappedPlan.plan.weeklyTarget,
+      },
+    });
+  }
+
+  return mappedPlan;
 }
 
 export async function refreshLearningPlan(userId: string) {
-  return generateLearningPlan(userId);
+  return generateLearningPlan(userId, {
+    notify: true,
+    notificationType: NotificationType.LEARNING_PLAN_REFRESHED,
+  });
 }
 
 export async function completeLearningPlanStep(userId: string, params: CompleteLearningPlanStepParams) {
@@ -328,9 +362,15 @@ export async function updatePlanAfterSessionComplete(userId: string, input: {
   }
 }
 
-export async function generateLearningPlanBestEffort(userId: string) {
+export async function generateLearningPlanBestEffort(
+  userId: string,
+  options: {
+    notify?: boolean;
+    notificationType?: LearningPlanNotificationKind;
+  } = {},
+) {
   try {
-    return await generateLearningPlan(userId);
+    return await generateLearningPlan(userId, options);
   } catch (error: any) {
     console.warn(`[learning-plan] best-effort generation failed for ${userId}: ${error?.message ?? error}`);
     return null;

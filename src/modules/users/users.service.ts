@@ -1,8 +1,9 @@
-import { ConditionType, MissionType, Prisma } from '@prisma/client';
+import { ConditionType, MissionType, NotificationType, Prisma } from '@prisma/client';
 import prisma from '../../config/database';
 import { AddXpInput, UpdateMeInput, UpdateOnboardingInput } from '../../schemas/users';
 import * as missionsService from '../missions/missions.service';
 import * as learningPlanService from '../learning-plan/learning-plan.service';
+import * as notificationsService from '../notifications/notifications.service';
 import * as usersRepo from './users.repository';
 
 function buildUserProfile(user: NonNullable<Awaited<ReturnType<typeof usersRepo.findPublicUserProfileById>>>) {
@@ -28,6 +29,11 @@ type RewardGrantResult = {
     current: number;
     xp: number;
     completedAt: Date | null;
+  }>;
+  badgesEarned: Array<{
+    id: string;
+    title: string;
+    xpReward: number;
   }>;
 };
 
@@ -230,6 +236,7 @@ export async function grantCompletedSessionRewards(
       totalXp: user.totalXp,
       streakDays: user.streakDays,
       missionsCompleted: [],
+      badgesEarned: [],
     };
   }
 
@@ -289,6 +296,7 @@ export async function grantCompletedSessionRewards(
   );
 
   let badgeBonusXp = 0;
+  const badgesEarned: RewardGrantResult['badgesEarned'] = [];
   for (const badge of badges) {
     if (badge.userBadges.length > 0) {
       continue;
@@ -314,6 +322,11 @@ export async function grantCompletedSessionRewards(
       tx,
     );
     badgeBonusXp += badge.xpReward;
+    badgesEarned.push({
+      id: badge.id,
+      title: badge.title,
+      xpReward: badge.xpReward,
+    });
   }
 
   const updatedUser = await usersRepo.updateUserById(
@@ -336,10 +349,29 @@ export async function grantCompletedSessionRewards(
     tx,
   );
 
+  await notificationsService.createRewardNotifications({
+    userId,
+    session: {
+      id: session.id,
+      sourceType: session.sourceType,
+      sceneId: session.sceneId,
+      sceneTitle: session.sourceType === 'CUSTOM_PRACTICE'
+        ? session.customPracticeConfig?.displayTitle ?? 'Custom Practice'
+        : session.scene?.title ?? 'Practice Session',
+      xpEarned: session.xpEarned,
+      grammarScore: session.grammarScore,
+      vocabularyScore: session.vocabularyScore,
+      naturalnessScore: session.naturalnessScore,
+    },
+    missionsCompleted,
+    badgesEarned,
+  }, tx);
+
   return {
     totalXp: updatedUser.totalXp,
     streakDays: updatedUser.streakDays,
     missionsCompleted,
+    badgesEarned,
   };
 }
 
@@ -380,7 +412,10 @@ export async function updateOnboarding(userId: string, input: UpdateOnboardingIn
     selfAssessment: input.selfAssessment ?? null,
     onboardingCompletedAt: new Date(),
   });
-  await learningPlanService.generateLearningPlanBestEffort(userId);
+  await learningPlanService.generateLearningPlanBestEffort(userId, {
+    notify: true,
+    notificationType: NotificationType.LEARNING_PLAN_READY,
+  });
 
   return { updated: true };
 }

@@ -41,6 +41,7 @@ model User {
   learningPlans         LearningPlan[]
   userMissions          UserMission[]
   userBadges            UserBadge[]
+  notifications         Notification[]
   userVocabulary        UserVocabulary[]
   vocabularyOccurrences UserVocabularyOccurrence[]
   refreshTokens         RefreshToken[]
@@ -363,6 +364,30 @@ model UserBadge {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String               @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String               @db.Text
+  ctaType   NotificationCtaType?
+  metadata  Json?
+  isRead    Boolean              @default(false)
+  readAt    DateTime?
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // USER VOCABULARY (Flashcard cá nhân)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -611,6 +636,24 @@ enum ConditionType {
   VOCAB_SAVED // tổng từ đã lưu >= conditionValue
   FIRST_SESSION // hoàn thành session đầu tiên (conditionValue = 1)
   PERFECT_SCORE // đạt 100 điểm (conditionValue = 100)
+}
+
+enum NotificationType {
+  SESSION_COMPLETED
+  MISSION_COMPLETED
+  BADGE_EARNED
+  LEARNING_PLAN_READY
+  LEARNING_PLAN_REFRESHED
+  SYSTEM
+}
+
+enum NotificationCtaType {
+  SESSION_RESULT
+  LEARNING_PLAN
+  MISSIONS
+  BADGES
+  SCENES
+  HOME
 }
 
 enum AiFeatureType {
