@@ -7,7 +7,8 @@ import { SessionContextRecord, SessionMessageRecord } from './sessions.repositor
 
 const OPENAI_EVALUATOR_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const CLAUDE_EVALUATOR_MODEL = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
-const SHORT_VI_EXPLANATION_LIMIT = 15;
+const SHORT_EXPLANATION_LIMIT = 15;
+export type FeedbackLocale = 'en' | 'vi';
 
 const feedbackIssueSchema = z.object({
   type: z.nativeEnum(ErrorType),
@@ -45,6 +46,7 @@ type ProviderMessage = {
 type SessionEvaluationInput = {
   session: SessionContextRecord;
   messages: SessionMessageRecord[];
+  feedbackLocale?: FeedbackLocale;
 };
 type RuntimeAiModel = Awaited<ReturnType<typeof getAiFeatureRuntimePlan>>['models'][number];
 
@@ -104,11 +106,11 @@ function getUniqueWordCount(words: string[]) {
   return new Set(words).size;
 }
 
-function truncateVietnameseExplanation(value: string | null | undefined) {
+function truncateExplanation(value: string | null | undefined) {
   if (!value) return null;
 
   const words = normalizeWhitespace(value).split(' ');
-  return words.slice(0, SHORT_VI_EXPLANATION_LIMIT).join(' ');
+  return words.slice(0, SHORT_EXPLANATION_LIMIT).join(' ');
 }
 
 function getConversationSource(session: SessionContextRecord) {
@@ -142,7 +144,20 @@ function getUserMessages(messages: SessionMessageRecord[]) {
   return messages.filter((message) => message.role === MessageRole.USER && !message.isHint);
 }
 
-function buildEvaluationSystemPrompt() {
+function getFeedbackLanguageLabel(locale: FeedbackLocale) {
+  return locale === 'en' ? 'English' : 'Vietnamese';
+}
+
+function getExplanationExample(locale: FeedbackLocale) {
+  return locale === 'en'
+    ? 'Wrong past tense'
+    : 'Sai thì quá khứ';
+}
+
+function buildEvaluationSystemPrompt(locale: FeedbackLocale = 'vi') {
+  const feedbackLanguage = getFeedbackLanguageLabel(locale);
+  const explanationExample = getExplanationExample(locale);
+
   return `You are the Scenio backend evaluator for an English speaking roleplay app.
 
 Your task:
@@ -168,7 +183,7 @@ Rules:
   - errorType: one of GRAMMAR, VOCABULARY, NATURALNESS
   - originalPhrase: the short problematic phrase from the user message
   - suggestion: a short improved version in English
-  - explanation: a very short Vietnamese explanation, maximum 15 words
+  - explanation: a very short ${feedbackLanguage} explanation, maximum 15 words
   - isGood: false
   - issues: include every important issue in that message, up to 3 issues
 - Each issue should include:
@@ -176,7 +191,7 @@ Rules:
   - subtype: short uppercase label like TENSE, WORD_CHOICE, ARTICLE, SENTENCE_STRUCTURE, POLITENESS, CLARITY
   - originalPhrase: short problematic phrase
   - suggestion: short improved English phrase or sentence
-  - explanation: Vietnamese explanation, maximum 15 words
+  - explanation: ${feedbackLanguage} explanation, maximum 15 words
   - startIndex/endIndex: character indexes in the original user message if easy, otherwise null
 - Focus on whether the learner expressed the idea clearly, naturally, and appropriately for the roleplay context.
 - Keep scores realistic for a learner, not overly generous.
@@ -196,7 +211,7 @@ Required JSON shape:
       "errorType": "GRAMMAR",
       "originalPhrase": "I go yesterday",
       "suggestion": "I went yesterday",
-      "explanation": "Sai thì quá khứ",
+      "explanation": "${explanationExample}",
       "isGood": false,
       "issues": [
         {
@@ -204,7 +219,7 @@ Required JSON shape:
           "subtype": "TENSE",
           "originalPhrase": "go yesterday",
           "suggestion": "went yesterday",
-          "explanation": "Sai thì quá khứ",
+          "explanation": "${explanationExample}",
           "startIndex": null,
           "endIndex": null
         }
@@ -256,7 +271,7 @@ function extractJsonObject(rawText: string) {
   throw new Error('Evaluator không trả về JSON hợp lệ');
 }
 
-async function callEvaluationProvider(messages: ProviderMessage[]) {
+async function callEvaluationProvider(messages: ProviderMessage[], locale: FeedbackLocale) {
   const plan = await getAiFeatureRuntimePlan(AiFeatureType.EVALUATOR_LLM);
   const models = plan.models.length > 0
     ? plan.models
@@ -265,7 +280,7 @@ async function callEvaluationProvider(messages: ProviderMessage[]) {
 
   for (const model of models) {
     try {
-      return await callRuntimeEvaluatorModel(model, messages);
+      return await callRuntimeEvaluatorModel(model, messages, locale);
     } catch (error: any) {
       errors.push(`${model.provider}/${model.modelId}: ${error?.message ?? 'unknown error'}`);
     }
@@ -319,14 +334,14 @@ function getRequiredProviderApiKey(providerName: AiProvider) {
   return value;
 }
 
-async function callRuntimeEvaluatorModel(model: RuntimeAiModel, messages: ProviderMessage[]) {
+async function callRuntimeEvaluatorModel(model: RuntimeAiModel, messages: ProviderMessage[], locale: FeedbackLocale) {
   if (model.provider === AiProvider.ANTHROPIC) {
     const anthropic = new Anthropic({ apiKey: getRequiredProviderApiKey(AiProvider.ANTHROPIC) });
     const response = await anthropic.messages.create({
       model: model.modelId,
       max_tokens: 1800,
       temperature: 0.2,
-      system: buildEvaluationSystemPrompt(),
+      system: buildEvaluationSystemPrompt(locale),
       messages,
     });
 
@@ -344,13 +359,13 @@ async function callRuntimeEvaluatorModel(model: RuntimeAiModel, messages: Provid
   }
 
   if (model.provider === AiProvider.GOOGLE) {
-    return callGeminiEvaluatorModel(model.modelId, messages);
+    return callGeminiEvaluatorModel(model.modelId, messages, locale);
   }
 
-  return callOpenAiEvaluatorModel(model.modelId, messages);
+  return callOpenAiEvaluatorModel(model.modelId, messages, locale);
 }
 
-async function callOpenAiEvaluatorModel(modelId: string, messages: ProviderMessage[]) {
+async function callOpenAiEvaluatorModel(modelId: string, messages: ProviderMessage[], locale: FeedbackLocale) {
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
@@ -362,7 +377,7 @@ async function callOpenAiEvaluatorModel(modelId: string, messages: ProviderMessa
       temperature: 0.2,
       max_output_tokens: 1800,
       input: [
-        { role: 'system', content: buildEvaluationSystemPrompt() },
+        { role: 'system', content: buildEvaluationSystemPrompt(locale) },
         ...messages.map((message) => ({
           role: message.role,
           content: message.content,
@@ -388,7 +403,7 @@ async function callOpenAiEvaluatorModel(modelId: string, messages: ProviderMessa
   return text;
 }
 
-async function callGeminiEvaluatorModel(modelId: string, messages: ProviderMessage[]) {
+async function callGeminiEvaluatorModel(modelId: string, messages: ProviderMessage[], locale: FeedbackLocale) {
   const baseUrl = (process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
   const response = await fetch(`${baseUrl}/models/${modelId}:generateContent`, {
     method: 'POST',
@@ -398,7 +413,7 @@ async function callGeminiEvaluatorModel(modelId: string, messages: ProviderMessa
     },
     body: JSON.stringify({
       system_instruction: {
-        parts: [{ text: buildEvaluationSystemPrompt() }],
+        parts: [{ text: buildEvaluationSystemPrompt(locale) }],
       },
       contents: messages.map((message) => ({
         role: message.role === 'assistant' ? 'model' : 'user',
@@ -428,7 +443,7 @@ async function callGeminiEvaluatorModel(modelId: string, messages: ProviderMessa
   return text;
 }
 
-function buildHeuristicFeedback(message: SessionMessageRecord): SessionFeedbackItem {
+function buildHeuristicFeedback(message: SessionMessageRecord, locale: FeedbackLocale = 'vi'): SessionFeedbackItem {
   const text = normalizeWhitespace(message.content);
   const words = getWords(text);
   const uniqueWordCount = getUniqueWordCount(words);
@@ -439,7 +454,7 @@ function buildHeuristicFeedback(message: SessionMessageRecord): SessionFeedbackI
       subtype: 'SHORT_RESPONSE',
       originalPhrase: text,
       suggestion: 'Try a slightly longer response with one more detail.',
-      explanation: 'Câu trả lời còn quá ngắn',
+      explanation: locale === 'en' ? 'The reply is too short' : 'Câu trả lời còn quá ngắn',
       startIndex: 0,
       endIndex: text.length,
     };
@@ -462,7 +477,7 @@ function buildHeuristicFeedback(message: SessionMessageRecord): SessionFeedbackI
       subtype: 'REPETITION',
       originalPhrase: text,
       suggestion: 'Add one more specific word or detail to sound clearer.',
-      explanation: 'Từ vựng còn hơi lặp',
+      explanation: locale === 'en' ? 'Vocabulary is a bit repetitive' : 'Từ vựng còn hơi lặp',
       startIndex: 0,
       endIndex: text.length,
     };
@@ -561,7 +576,7 @@ function sanitizeFeedbackItem(
     subtype: issue.subtype ? normalizeWhitespace(issue.subtype).toUpperCase().slice(0, 40) : null,
     originalPhrase: normalizeWhitespace(issue.originalPhrase || rawItem.originalPhrase || fallbackMessage.content).slice(0, 240) || null,
     suggestion: normalizeWhitespace(issue.suggestion || rawItem.suggestion || '').slice(0, 240) || null,
-    explanation: truncateVietnameseExplanation(issue.explanation || rawItem.explanation),
+    explanation: truncateExplanation(issue.explanation || rawItem.explanation),
     startIndex: typeof issue.startIndex === 'number' ? issue.startIndex : null,
     endIndex: typeof issue.endIndex === 'number' ? issue.endIndex : null,
   }));
@@ -574,13 +589,13 @@ function sanitizeFeedbackItem(
     errorType,
     originalPhrase: hasError ? primaryIssue?.originalPhrase ?? normalizeWhitespace(rawItem.originalPhrase || fallbackMessage.content).slice(0, 240) : null,
     suggestion: hasError ? primaryIssue?.suggestion ?? (normalizeWhitespace(rawItem.suggestion || '').slice(0, 240) || null) : null,
-    explanation: hasError ? primaryIssue?.explanation ?? truncateVietnameseExplanation(rawItem.explanation) : null,
+    explanation: hasError ? primaryIssue?.explanation ?? truncateExplanation(rawItem.explanation) : null,
     isGood: hasError ? false : true,
     feedbackDetails: { issues },
   };
 }
 
-function parseAiEvaluation(rawText: string, messages: SessionMessageRecord[]) {
+function parseAiEvaluation(rawText: string, messages: SessionMessageRecord[], locale: FeedbackLocale) {
   const userMessages = getUserMessages(messages);
   const parsed = aiEvaluationSchema.parse(JSON.parse(extractJsonObject(rawText)));
   const feedbackMap = new Map(parsed.feedback.map((item) => [item.messageId, item]));
@@ -595,7 +610,7 @@ function parseAiEvaluation(rawText: string, messages: SessionMessageRecord[]) {
       const rawItem = feedbackMap.get(message.id);
       return rawItem
         ? sanitizeFeedbackItem(rawItem, message)
-        : buildHeuristicFeedback(message);
+        : buildHeuristicFeedback(message, locale);
     }),
   };
 }
@@ -608,9 +623,10 @@ function parseAiEvaluation(rawText: string, messages: SessionMessageRecord[]) {
  * Returns: Scores, xpEarned, feedback per-turn, và evaluationMode.
  */
 export async function evaluateCompletedSession(input: SessionEvaluationInput): Promise<SessionEvaluationResult> {
+  const locale = input.feedbackLocale ?? 'vi';
   const userMessages = getUserMessages(input.messages);
   const heuristicScores = buildHeuristicScores(input.messages);
-  const heuristicFeedback = userMessages.map(buildHeuristicFeedback);
+  const heuristicFeedback = userMessages.map((message) => buildHeuristicFeedback(message, locale));
 
   try {
     const rawText = await callEvaluationProvider([
@@ -618,9 +634,9 @@ export async function evaluateCompletedSession(input: SessionEvaluationInput): P
         role: 'user',
         content: buildEvaluationPrompt(input),
       },
-    ]);
+    ], locale);
 
-    const parsed = parseAiEvaluation(rawText, input.messages);
+    const parsed = parseAiEvaluation(rawText, input.messages, locale);
     return {
       scores: parsed.scores,
       xpEarned: computeSessionXp({

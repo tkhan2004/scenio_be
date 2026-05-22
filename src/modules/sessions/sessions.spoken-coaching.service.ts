@@ -2,6 +2,8 @@ import { ErrorType, MessageRole, SessionModality, VoiceProvider } from '@prisma/
 import { buildVoiceLearningSummary } from './sessions.voice-learning.service';
 import { SessionMessageRecord } from './sessions.repository';
 
+type CoachingLocale = 'en' | 'vi';
+
 type SpokenCoachingSessionContext = {
   hintCount: number;
   modality: SessionModality;
@@ -31,6 +33,7 @@ type SpokenCoachingMessageContext = Pick<
 type SpokenCoachingInput = {
   session: SpokenCoachingSessionContext;
   messages: SpokenCoachingMessageContext[];
+  locale?: CoachingLocale;
   scores: {
     grammar: number | null;
     vocabulary: number | null;
@@ -77,24 +80,36 @@ function buildSummary(args: {
   confidenceScore: number;
   shortResponseRatio: number;
   hintCount: number;
+  locale: CoachingLocale;
 }) {
+  const en = args.locale === 'en';
   if (args.expressionScore >= 78 && args.clarityScore >= 78 && args.confidenceScore >= 72) {
-    return 'Bạn diễn đạt ý khá rõ, tự nhiên và đủ tự tin cho ngữ cảnh hội thoại này.';
+    return en
+      ? 'You expressed your ideas clearly, naturally, and confidently enough for this scene.'
+      : 'Bạn diễn đạt ý khá rõ, tự nhiên và đủ tự tin cho ngữ cảnh hội thoại này.';
   }
 
   if (args.shortResponseRatio >= 0.45) {
-    return 'Bạn truyền được ý chính, nhưng nhiều lượt trả lời còn ngắn nên cảm giác chưa thật sự tự tin.';
+    return en
+      ? 'You communicated the main idea, but many turns were short, so the conversation felt less confident.'
+      : 'Bạn truyền được ý chính, nhưng nhiều lượt trả lời còn ngắn nên cảm giác chưa thật sự tự tin.';
   }
 
   if (args.clarityScore < 70) {
-    return 'Bạn có ý đúng ngữ cảnh, nhưng cách diễn đạt đôi lúc chưa đủ rõ hoặc còn vấp ở cấu trúc câu.';
+    return en
+      ? 'Your ideas fit the context, but some wording or sentence structure was not clear enough.'
+      : 'Bạn có ý đúng ngữ cảnh, nhưng cách diễn đạt đôi lúc chưa đủ rõ hoặc còn vấp ở cấu trúc câu.';
   }
 
   if (args.hintCount >= 2) {
-    return 'Bạn bám được hội thoại, nhưng vẫn đang phụ thuộc khá nhiều vào hint để duy trì mạch nói.';
+    return en
+      ? 'You followed the conversation, but you still relied on hints to keep speaking.'
+      : 'Bạn bám được hội thoại, nhưng vẫn đang phụ thuộc khá nhiều vào hint để duy trì mạch nói.';
   }
 
-  return 'Bạn đang nói khá ổn trong ngữ cảnh này; bước tiếp theo là làm câu trả lời dài và tự nhiên hơn một chút.';
+  return en
+    ? 'You handled this scene fairly well; next, make your replies a little longer and more natural.'
+    : 'Bạn đang nói khá ổn trong ngữ cảnh này; bước tiếp theo là làm câu trả lời dài và tự nhiên hơn một chút.';
 }
 
 function buildStrengths(args: {
@@ -103,31 +118,45 @@ function buildStrengths(args: {
   naturalness: number;
   averageWordsPerTurn: number;
   questionCount: number;
+  locale: CoachingLocale;
 }) {
   const strengths: string[] = [];
+  const en = args.locale === 'en';
 
   if (args.grammar >= 75) {
-    strengths.push('Cấu trúc câu tương đối ổn, ít lỗi ngữ pháp lớn.');
+    strengths.push(en
+      ? 'Your sentence structure was fairly solid with few major grammar issues.'
+      : 'Cấu trúc câu tương đối ổn, ít lỗi ngữ pháp lớn.');
   }
 
   if (args.vocabulary >= 75) {
-    strengths.push('Từ vựng dùng khá hợp ngữ cảnh, không quá nghèo ý.');
+    strengths.push(en
+      ? 'Your vocabulary fit the context and gave enough meaning.'
+      : 'Từ vựng dùng khá hợp ngữ cảnh, không quá nghèo ý.');
   }
 
   if (args.naturalness >= 75) {
-    strengths.push('Cách diễn đạt nghe tự nhiên, khá giống hội thoại thật.');
+    strengths.push(en
+      ? 'Your wording sounded natural and close to a real conversation.'
+      : 'Cách diễn đạt nghe tự nhiên, khá giống hội thoại thật.');
   }
 
   if (args.averageWordsPerTurn >= 8) {
-    strengths.push('Phần lớn câu trả lời đủ ý, không bị quá cụt.');
+    strengths.push(en
+      ? 'Most replies had enough detail and did not feel too short.'
+      : 'Phần lớn câu trả lời đủ ý, không bị quá cụt.');
   }
 
   if (args.questionCount >= 1) {
-    strengths.push('Bạn biết dùng câu hỏi để giữ mạch hội thoại.');
+    strengths.push(en
+      ? 'You used questions to keep the conversation moving.'
+      : 'Bạn biết dùng câu hỏi để giữ mạch hội thoại.');
   }
 
   if (strengths.length === 0) {
-    strengths.push('Bạn vẫn giữ được mạch hội thoại và truyền đạt được ý chính.');
+    strengths.push(en
+      ? 'You still kept the conversation going and communicated the main idea.'
+      : 'Bạn vẫn giữ được mạch hội thoại và truyền đạt được ý chính.');
   }
 
   return strengths.slice(0, 3);
@@ -142,37 +171,52 @@ function buildImprovements(args: {
   grammarErrorCount: number;
   vocabularyErrorCount: number;
   naturalnessErrorCount: number;
+  locale: CoachingLocale;
 }) {
   const improvements: string[] = [];
+  const en = args.locale === 'en';
 
   if (args.grammar < 72 || args.grammarErrorCount >= 2) {
-    improvements.push('Ưu tiên nói câu đơn rõ ràng trước, rồi mới nối ý dài hơn.');
+    improvements.push(en
+      ? 'Start with clear simple sentences before connecting longer ideas.'
+      : 'Ưu tiên nói câu đơn rõ ràng trước, rồi mới nối ý dài hơn.');
   }
 
   if (args.vocabulary < 72 || args.vocabularyErrorCount >= 2) {
-    improvements.push('Nên thêm từ cụ thể hơn thay vì lặp lại cùng một kiểu diễn đạt.');
+    improvements.push(en
+      ? 'Add more specific words instead of repeating the same wording.'
+      : 'Nên thêm từ cụ thể hơn thay vì lặp lại cùng một kiểu diễn đạt.');
   }
 
   if (args.naturalness < 72 || args.naturalnessErrorCount >= 2) {
-    improvements.push('Hãy nói theo cách tự nhiên hơn, tránh dịch từng chữ từ tiếng Việt.');
+    improvements.push(en
+      ? 'Use more natural English phrasing instead of translating word by word.'
+      : 'Hãy nói theo cách tự nhiên hơn, tránh dịch từng chữ từ tiếng Việt.');
   }
 
   if (args.shortResponseRatio >= 0.4) {
-    improvements.push('Mỗi lượt trả lời nên thêm một chi tiết nữa để nghe tự tin hơn.');
+    improvements.push(en
+      ? 'Add one more detail in each turn to sound more confident.'
+      : 'Mỗi lượt trả lời nên thêm một chi tiết nữa để nghe tự tin hơn.');
   }
 
   if (args.hintCount >= 2) {
-    improvements.push('Thử tự nói trước một lượt rồi mới dùng hint khi thật sự bí.');
+    improvements.push(en
+      ? 'Try answering once by yourself before using a hint.'
+      : 'Thử tự nói trước một lượt rồi mới dùng hint khi thật sự bí.');
   }
 
   if (improvements.length === 0) {
-    improvements.push('Bạn có thể nâng level bằng cách mở rộng câu trả lời và thêm lý do hoặc ví dụ.');
+    improvements.push(en
+      ? 'You can level up by expanding replies with a reason or example.'
+      : 'Bạn có thể nâng level bằng cách mở rộng câu trả lời và thêm lý do hoặc ví dụ.');
   }
 
   return improvements.slice(0, 3);
 }
 
-function buildTurnHighlights(userMessages: SpokenCoachingMessageContext[]) {
+function buildTurnHighlights(userMessages: SpokenCoachingMessageContext[], locale: CoachingLocale) {
+  const en = locale === 'en';
   const issueMessages = userMessages
     .filter((message) => message.hasError)
     .sort((a, b) => a.turnIndex - b.turnIndex)
@@ -183,7 +227,9 @@ function buildTurnHighlights(userMessages: SpokenCoachingMessageContext[]) {
       content: message.content,
       status: 'NEEDS_WORK' as const,
       focus: message.errorType ?? ErrorType.NATURALNESS,
-      note: message.explanation || 'Câu này có thể diễn đạt tự nhiên và rõ hơn.',
+      note: message.explanation || (en
+        ? 'This sentence could be clearer and more natural.'
+        : 'Câu này có thể diễn đạt tự nhiên và rõ hơn.'),
       suggestion: message.suggestion ?? null,
     }));
 
@@ -195,7 +241,9 @@ function buildTurnHighlights(userMessages: SpokenCoachingMessageContext[]) {
         content: goodMessage.content,
         status: 'GOOD' as const,
         focus: 'GOOD_EXAMPLE' as const,
-        note: 'Câu này ổn, có thể giữ cách diễn đạt tương tự ở các lượt sau.',
+        note: en
+          ? 'This sentence works well; keep using similar phrasing in later turns.'
+          : 'Câu này ổn, có thể giữ cách diễn đạt tương tự ở các lượt sau.',
         suggestion: null,
       }]
     : [];
@@ -215,6 +263,7 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
   if (userMessages.length === 0) {
     return null;
   }
+  const locale = input.locale ?? 'vi';
 
   const grammar = getBaseScore(input.scores.grammar, 60);
   const vocabulary = getBaseScore(input.scores.vocabulary, 58);
@@ -256,6 +305,7 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
       confidenceScore,
       shortResponseRatio,
       hintCount: input.session.hintCount,
+      locale,
     }),
     scores: {
       expression: expressionScore,
@@ -268,6 +318,7 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
       naturalness,
       averageWordsPerTurn,
       questionCount,
+      locale,
     }),
     improvements: buildImprovements({
       grammar,
@@ -278,8 +329,9 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
       grammarErrorCount,
       vocabularyErrorCount,
       naturalnessErrorCount,
+      locale,
     }),
-    turnHighlights: buildTurnHighlights(userMessages),
+    turnHighlights: buildTurnHighlights(userMessages, locale),
     behaviorSignals: {
       userTurnCount: userMessages.length,
       hintCount: input.session.hintCount,
@@ -287,6 +339,8 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
       shortResponseCount,
       questionCount,
     },
-    note: 'Đây là coaching dựa trên transcript và cách diễn đạt, chưa phải chấm phát âm.',
+    note: locale === 'en'
+      ? 'This coaching is based on transcript and expression, not pronunciation scoring yet.'
+      : 'Đây là coaching dựa trên transcript và cách diễn đạt, chưa phải chấm phát âm.',
   };
 }

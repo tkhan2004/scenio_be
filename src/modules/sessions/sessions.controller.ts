@@ -15,6 +15,15 @@ import {
 } from '../../schemas/sessions';
 import * as sessionsService from './sessions.service';
 
+type ClientFeedbackLocale = 'en' | 'vi';
+
+function resolveFeedbackLocale(req: Request): ClientFeedbackLocale {
+  const explicit = req.header('x-scenio-locale') || req.header('x-locale') || '';
+  const acceptLanguage = req.header('accept-language') || '';
+  const raw = `${explicit},${acceptLanguage}`.toLowerCase();
+  return raw.includes('en') ? 'en' : 'vi';
+}
+
 /**
  * HTTP Handler - levelTestController
  * Summary: Xử lý một lượt hội thoại trong bài test trình độ.
@@ -135,7 +144,9 @@ export const completeSessionController = async (req: Request, res: Response, nex
     }
 
     const params = (req as any).validatedParams as CompleteSessionParams;
-    const result = await sessionsService.completeSession(userId, params);
+    const result = await sessionsService.completeSession(userId, params, {
+      feedbackLocale: resolveFeedbackLocale(req),
+    });
     ok(res, result);
   } catch (error) {
     next(error);
@@ -178,7 +189,9 @@ export const getSessionResultController = async (req: Request, res: Response, ne
     }
 
     const params = (req as any).validatedParams as GetSessionResultParams;
-    const result = await sessionsService.getSessionResult(userId, params);
+    const result = await sessionsService.getSessionResult(userId, params, {
+      feedbackLocale: resolveFeedbackLocale(req),
+    });
     ok(res, result);
   } catch (error) {
     next(error);
