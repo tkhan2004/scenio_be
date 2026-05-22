@@ -47,6 +47,7 @@
 | 11c | POST | `/learning-plan/generate` | ✓ | Tạo lộ trình mới từ onboarding, level test, session history | ✅ Done |
 | 11d | POST | `/learning-plan/refresh` | ✓ | Archive plan cũ và tạo lộ trình mới | ✅ Done |
 | 11e | PATCH | `/learning-plan/steps/:id/complete` | ✓ | Đánh dấu một bước trong lộ trình đã hoàn thành | ✅ Done |
+| 11f | GET | `/learning-plan/:id/completion-summary` | ✓ | Lấy completion summary của roadmap theo plan id | ✅ Done |
 | **SESSIONS** |
 | 12 | POST | `/sessions/level-test` | ✓ | Bài kiểm tra trình độ AI (5 lượt) | ✅ Done |
 | 13 | POST | `/sessions/start` | ✓ | Bắt đầu phiên học mới | ✅ Done |
@@ -297,18 +298,38 @@ Lấy active learning plan hiện tại. Nếu user chưa có plan, backend tự
     "plan": {
       "id": "uuid",
       "status": "ACTIVE",
-      "title": "A2 travel speaking plan",
-      "summary": "Focus on vocabulary with 4 practice sessions this week.",
+      "derivedState": "IN_PROGRESS",
+      "title": "Travel English A2 Roadmap",
+      "summary": "Lộ trình 3 buổi/tuần cho trình độ A2, ưu tiên grammar theo mục tiêu TRAVEL.",
       "level": "A2",
       "learningGoal": "TRAVEL",
-      "studyFrequency": "4 times/week",
-      "focusSkill": "VOCABULARY",
-      "weeklyTarget": 4,
+      "studyFrequency": "REGULAR",
+      "focusSkill": "GRAMMAR",
+      "weeklyTarget": 3,
       "generatedBy": "RULE",
+      "targetOutcome": "Handle 4 everyday travel situations clearly at A2 level.",
+      "completionCriteria": {
+        "requiredSteps": 5,
+        "requiredCoreScenes": 4,
+        "minimumRecentAverageScore": 70
+      },
+      "reward": {
+        "badgeTitle": "A2 Travel English Roadmap",
+        "xpBonus": 120,
+        "unlocks": ["Next roadmap suggestion"]
+      },
+      "schedule": {
+        "suggestedDays": ["TUE", "THU", "SAT"],
+        "nextSuggestedAt": "2026-05-26T09:00:00.000Z"
+      },
       "sourceSnapshot": {
         "selfAssessment": "VOCABULARY",
-        "recentSessionCount": 3
-      }
+        "recentSessionCount": 3,
+        "roadmapMeta": {},
+        "roadmapLifecycle": {}
+      },
+      "createdAt": "2026-05-22T08:00:00.000Z",
+      "updatedAt": "2026-05-22T08:00:00.000Z"
     },
     "steps": [
       {
@@ -326,7 +347,8 @@ Lấy active learning plan hiện tại. Nếu user chưa có plan, backend tự
         "metadata": {
           "retrievalMode": "HYBRID_VECTOR",
           "score": 0.78,
-          "similarity": 0.84
+          "similarity": 0.84,
+          "openAction": "SCENE_DETAIL"
         },
         "scene": {
           "id": "uuid",
@@ -344,8 +366,9 @@ Lấy active learning plan hiện tại. Nếu user chưa có plan, backend tự
       "type": "SCENE",
       "sceneId": "uuid",
       "title": "Airport Check-in",
-      "focusSkill": "VOCABULARY"
-    }
+      "focusSkill": "GRAMMAR"
+    },
+    "completionSummary": null
   }
 }
 ```
@@ -364,6 +387,43 @@ Làm mới lộ trình chủ động từ client. Backend archive plan cũ rồi
 Đánh dấu một step thuộc plan của user là completed. Backend tự unlock step kế tiếp nếu cần.
 
 **Response 200:** cùng shape với `GET /learning-plan/current`.
+
+### 11f. GET `/learning-plan/:id/completion-summary`
+Lấy completion summary của một roadmap theo `planId`. Nếu roadmap chưa đủ điều kiện completed, `completionSummary` có thể là `null`.
+
+**Response 200**
+```json
+{
+  "success": true,
+  "status": 200,
+  "data": {
+    "completionSummary": {
+      "planId": "uuid",
+      "title": "Travel English A2 Roadmap",
+      "level": "A2",
+      "completedAt": "2026-05-22T10:00:00.000Z",
+      "completedScenes": [
+        "Airport check-in",
+        "Hotel check-in"
+      ],
+      "scoreDelta": {
+        "grammar": { "before": 62, "after": 74 },
+        "vocabulary": { "before": 66, "after": 73 },
+        "naturalness": { "before": 58, "after": 71 }
+      },
+      "reward": {
+        "badgeTitle": "A2 Travel English Roadmap",
+        "xpBonus": 120
+      },
+      "nextRoadmap": {
+        "title": "Travel English vocabulary expansion",
+        "level": "A2",
+        "focusSkill": "VOCABULARY"
+      }
+    }
+  }
+}
+```
 
 ### 11. GET `/scenes/:id`
 Lấy chi tiết đầy đủ của một scene active để hiển thị màn hình scene detail.
