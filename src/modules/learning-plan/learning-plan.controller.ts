@@ -1,6 +1,9 @@
 import { NextFunction, Request, Response } from 'express';
 import { ok } from '../../utils/response';
-import { CompleteLearningPlanStepParams } from '../../schemas/learning-plan';
+import {
+  CompleteLearningPlanStepParams,
+  GetLearningPlanCompletionSummaryParams,
+} from '../../schemas/learning-plan';
 import * as learningPlanService from './learning-plan.service';
 
 export const getCurrentLearningPlan = async (req: Request, res: Response, next: NextFunction) => {
@@ -33,6 +36,17 @@ export const refreshLearningPlan = async (req: Request, res: Response, next: Nex
   }
 };
 
+export const getLearningPlanCompletionSummary = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user.id as string;
+    const params = (req as any).validatedParams as GetLearningPlanCompletionSummaryParams;
+    const result = await learningPlanService.getLearningPlanCompletionSummary(userId, params.id);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const completeLearningPlanStep = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = (req as any).user.id as string;
@@ -43,4 +57,3 @@ export const completeLearningPlanStep = async (req: Request, res: Response, next
     next(error);
   }
 };
-

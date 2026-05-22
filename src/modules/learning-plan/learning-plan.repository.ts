@@ -61,6 +61,7 @@ export async function findUserLearningContext(userId: string) {
       learningGoal: true,
       studyFrequency: true,
       selfAssessment: true,
+      lastActiveDate: true,
     },
   });
 }
@@ -104,6 +105,16 @@ export async function findActiveLearningPlan(userId: string, db: DbClient = pris
   });
 }
 
+export async function findOwnedLearningPlanById(userId: string, planId: string, db: DbClient = prisma) {
+  return db.learningPlan.findFirst({
+    where: {
+      id: planId,
+      userId,
+    },
+    select: learningPlanSelect,
+  });
+}
+
 export async function archiveActiveLearningPlans(userId: string, db: DbClient = prisma) {
   return db.learningPlan.updateMany({
     where: {
@@ -119,6 +130,18 @@ export async function archiveActiveLearningPlans(userId: string, db: DbClient = 
 export async function createLearningPlan(input: Prisma.LearningPlanCreateInput, db: DbClient = prisma) {
   return db.learningPlan.create({
     data: input,
+    select: learningPlanSelect,
+  });
+}
+
+export async function updateLearningPlanById(
+  planId: string,
+  data: Prisma.LearningPlanUpdateInput,
+  db: DbClient = prisma,
+) {
+  return db.learningPlan.update({
+    where: { id: planId },
+    data,
     select: learningPlanSelect,
   });
 }
@@ -180,7 +203,7 @@ export async function findStepByPlanAndScene(planId: string, sceneId: string, db
     where: {
       planId,
       sceneId,
-      type: 'SCENE',
+      type: { in: ['SCENE', 'RETRY_SCENE'] },
       status: { notIn: ['COMPLETED', 'SKIPPED'] },
     },
     orderBy: { sortOrder: 'asc' },
@@ -199,3 +222,45 @@ export async function countPlanSteps(planId: string, db: DbClient = prisma) {
   });
 }
 
+export async function findCompletedSessionsForRoadmapWindow(
+  userId: string,
+  args: {
+    endedAfter?: Date;
+    endedBefore?: Date;
+    take?: number;
+  } = {},
+  db: DbClient = prisma,
+) {
+  return db.session.findMany({
+    where: {
+      userId,
+      status: 'COMPLETED',
+      endedAt: {
+        ...(args.endedAfter ? { gte: args.endedAfter } : {}),
+        ...(args.endedBefore ? { lt: args.endedBefore } : {}),
+      },
+    },
+    orderBy: { endedAt: 'desc' },
+    take: args.take,
+    select: {
+      id: true,
+      sceneId: true,
+      endedAt: true,
+      grammarScore: true,
+      vocabularyScore: true,
+      naturalnessScore: true,
+      scene: {
+        select: {
+          id: true,
+          title: true,
+        },
+      },
+      customPracticeConfig: {
+        select: {
+          id: true,
+          displayTitle: true,
+        },
+      },
+    },
+  });
+}

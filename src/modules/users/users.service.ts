@@ -407,6 +407,7 @@ export async function updateOnboarding(userId: string, input: UpdateOnboardingIn
   }
 
   await usersRepo.updateUserById(userId, {
+    ...(input.level ? { level: input.level, needsLevelTest: false } : {}),
     learningGoal: input.learningGoal ?? null,
     studyFrequency: input.studyFrequency ?? null,
     selfAssessment: input.selfAssessment ?? null,

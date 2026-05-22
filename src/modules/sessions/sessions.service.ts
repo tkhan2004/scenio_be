@@ -46,6 +46,10 @@ type LevelTestResult = {
 
 type MessageSource = SendSessionMessageInput['source'];
 type RuntimeAiModel = Awaited<ReturnType<typeof getAiFeatureRuntimePlan>>['models'][number];
+type SessionFeedbackLocale = sessionsEvaluatorService.FeedbackLocale;
+type SessionRequestOptions = {
+  feedbackLocale?: SessionFeedbackLocale;
+};
 
 const MESSAGE_SOURCE_MAP: Record<MessageSource, { role: MessageRole; modality: MessageModality }> = {
   USER_TEXT: { role: MessageRole.USER, modality: MessageModality.TEXT },
@@ -572,13 +576,16 @@ async function completeSessionWithEvaluation(
   userId: string,
   session: sessionsRepo.SessionContextRecord,
   responseMessage?: sessionsRepo.SessionMessageRecord,
+  options: SessionRequestOptions = {},
 ): Promise<SessionCompletionResponse> {
   const finalMessages = await sessionsRepo.findFinalMessagesForSession(session.id);
   assertSessionCanBeCompleted(session, finalMessages);
+  const feedbackLocale = options.feedbackLocale ?? 'vi';
 
   const evaluation = await sessionsEvaluatorService.evaluateCompletedSession({
     session,
     messages: finalMessages,
+    feedbackLocale,
   });
   const spokenCoaching = sessionsSpokenCoachingService.buildSpokenCoachingSummary({
     session: {
@@ -604,6 +611,7 @@ async function completeSessionWithEvaluation(
       vocabulary: evaluation.scores.vocabulary,
       naturalness: evaluation.scores.naturalness,
     },
+    locale: feedbackLocale,
   });
   const today = getTodayDateString();
 
@@ -1341,13 +1349,17 @@ export async function sendSessionMessage(
  * Behavior: Kiểm tra ownership -> load session context -> chạy evaluator + reward flow trên transcript final.
  * Returns: Session đã complete, score, và rewards do backend tính.
  */
-export async function completeSession(userId: string, params: CompleteSessionParams) {
+export async function completeSession(
+  userId: string,
+  params: CompleteSessionParams,
+  options: SessionRequestOptions = {},
+) {
   const session = await sessionsRepo.findOwnedSessionContext(userId, params.id);
   if (!session) {
     throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
   }
 
-  return completeSessionWithEvaluation(userId, session);
+  return completeSessionWithEvaluation(userId, session, undefined, options);
 }
 
 /**
@@ -1454,7 +1466,11 @@ export async function createSessionHint(
  * Behavior: Kiểm tra ownership -> từ chối session ACTIVE -> map transcript, scores, và voiceLearning summary nếu là voice session.
  * Returns: Session summary, messages, scores, và metadata học nói để client render màn result.
  */
-export async function getSessionResult(userId: string, params: GetSessionResultParams) {
+export async function getSessionResult(
+  userId: string,
+  params: GetSessionResultParams,
+  options: SessionRequestOptions = {},
+) {
   const session = await sessionsRepo.findOwnedSessionById(userId, params.id);
   if (!session) {
     throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
@@ -1468,6 +1484,7 @@ export async function getSessionResult(userId: string, params: GetSessionResultP
   }
 
   const source = getSessionResultSource(session);
+  const feedbackLocale = options.feedbackLocale ?? 'vi';
   const spokenCoaching = sessionsSpokenCoachingService.buildSpokenCoachingSummary({
     session: {
       hintCount: session.hintCount,
@@ -1482,6 +1499,7 @@ export async function getSessionResult(userId: string, params: GetSessionResultP
       vocabulary: session.vocabularyScore,
       naturalness: session.naturalnessScore,
     },
+    locale: feedbackLocale,
   });
 
   return {

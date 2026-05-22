@@ -5,6 +5,7 @@ import {
   completeLearningPlanStepSchema,
   generateLearningPlanSchema,
   getCurrentLearningPlanSchema,
+  getLearningPlanCompletionSummarySchema,
   refreshLearningPlanSchema,
 } from '../../schemas/learning-plan';
 import * as learningPlanController from './learning-plan.controller';
@@ -28,6 +29,17 @@ router.post('/generate', auth, validate(generateLearningPlanSchema), learningPla
  * @desc    Archive plan cũ và tạo lại learning plan mới
  */
 router.post('/refresh', auth, validate(refreshLearningPlanSchema), learningPlanController.refreshLearningPlan);
+
+/**
+ * @route   GET /api/learning-plan/:id/completion-summary
+ * @desc    Lấy completion summary của một roadmap đã hoàn thành
+ */
+router.get(
+  '/:id/completion-summary',
+  auth,
+  validate(getLearningPlanCompletionSummarySchema),
+  learningPlanController.getLearningPlanCompletionSummary,
+);
 
 /**
  * @route   PATCH /api/learning-plan/steps/:id/complete

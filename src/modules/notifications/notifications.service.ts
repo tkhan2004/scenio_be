@@ -45,6 +45,29 @@ type LearningPlanNotificationInput = {
   };
 };
 
+type RoadmapCompletedNotificationInput = {
+  userId: string;
+  planId: string;
+  planTitle: string;
+  reward: {
+    badgeTitle: string;
+    xpBonus: number;
+    unlocks: string[];
+  };
+  nextRoadmap: {
+    title: string;
+    level: string;
+    focusSkill: string;
+  };
+};
+
+type StudyReminderNotificationInput = {
+  userId: string;
+  planId: string;
+  planTitle: string;
+  nextSuggestedAt: Date;
+};
+
 function mapNotification(record: Awaited<ReturnType<typeof notificationsRepo.findNotificationsPage>>[number]) {
   return {
     id: record.id,
@@ -173,6 +196,43 @@ export async function createLearningPlanNotification(
       title: input.plan.title,
       focusSkill: input.plan.focusSkill,
       weeklyTarget: input.plan.weeklyTarget,
+    },
+  }, db);
+}
+
+export async function createRoadmapCompletedNotification(
+  input: RoadmapCompletedNotificationInput,
+  db: DbClient = prisma,
+) {
+  return notificationsRepo.createNotification({
+    userId: input.userId,
+    type: NotificationType.SYSTEM,
+    title: `Roadmap completed: ${input.planTitle}`,
+    message: `You completed the roadmap. Reward: ${input.reward.badgeTitle} and ${input.reward.xpBonus} XP bonus.`,
+    ctaType: NotificationCtaType.LEARNING_PLAN,
+    metadata: {
+      eventKind: 'ROADMAP_COMPLETED',
+      planId: input.planId,
+      reward: input.reward,
+      nextRoadmap: input.nextRoadmap,
+    },
+  }, db);
+}
+
+export async function createStudyReminderNotification(
+  input: StudyReminderNotificationInput,
+  db: DbClient = prisma,
+) {
+  return notificationsRepo.createNotification({
+    userId: input.userId,
+    type: NotificationType.SYSTEM,
+    title: 'Study reminder',
+    message: `Your roadmap suggests a practice session for ${input.planTitle} today.`,
+    ctaType: NotificationCtaType.LEARNING_PLAN,
+    metadata: {
+      eventKind: 'STUDY_REMINDER',
+      planId: input.planId,
+      nextSuggestedAt: input.nextSuggestedAt.toISOString(),
     },
   }, db);
 }
