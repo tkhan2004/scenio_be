@@ -13,7 +13,11 @@
     "db:studio": "prisma studio",
     "db:seed": "ts-node prisma/seed.ts",
     "db:reset": "prisma migrate reset --force",
+    "embeddings:backfill": "ts-node scripts/backfill-scene-embeddings.ts",
     "generate": "prisma generate",
+    "test:providers": "ts-node scripts/test-provider-pings.ts",
+    "test:smoke": "ts-node scripts/smoke-api.ts",
+    "test:elevenlabs": "ts-node scripts/test-elevenlabs.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

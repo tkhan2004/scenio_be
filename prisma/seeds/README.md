@@ -22,5 +22,15 @@ npm run db:seed
 - `admin@scenio.dev / 123456`
 - `learner@scenio.dev / 123456`
 - `beginner@scenio.dev / 123456`
+- `xp-tester@scenio.dev / 123456`
+
+## Coverage notes
+
+Current seed now includes:
+
+- `ACTIVE`, `COMPLETED`, and `ABANDONED` sessions
+- completed sessions that already have `xpGrantedAt`
+- one dedicated completed session without `xpGrantedAt` for testing `POST /users/xp`
+- scene-based vocabulary and manual vocabulary entries
 
 The seed is designed to be idempotent for repeated local testing.

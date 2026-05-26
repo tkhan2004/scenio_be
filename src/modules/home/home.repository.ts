@@ -83,6 +83,12 @@ export async function findInProgressSession(userId: string) {
       startedAt: "desc",
     },
     include: {
+      customPracticeConfig: {
+        select: {
+          displayTitle: true,
+          aiDisplayName: true,
+        },
+      },
       scene: {
         select: {
           title: true,

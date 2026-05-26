@@ -1,4 +1,4 @@
-import { Level, Prisma, Scene } from '@prisma/client';
+import { Level, Prisma } from '@prisma/client';
 import prisma from '../../config/database';
 
 const sceneCardSelect = {
@@ -41,13 +41,24 @@ const sceneDetailSelect = {
   },
 } satisfies Prisma.SceneSelect;
 
+const recommendationCandidateSelect = {
+  ...sceneCardSelect,
+  missionText: true,
+  _count: {
+    select: {
+      vocabulary: true,
+    },
+  },
+} satisfies Prisma.SceneSelect;
+
 export type SceneCardRecord = Prisma.SceneGetPayload<{ select: typeof sceneCardSelect }>;
 export type SearchSceneRecord = Prisma.SceneGetPayload<{ select: typeof searchSceneSelect }>;
 export type SceneDetailRecord = Prisma.SceneGetPayload<{ select: typeof sceneDetailSelect }>;
+export type RecommendationCandidateRecord = Prisma.SceneGetPayload<{ select: typeof recommendationCandidateSelect }>;
 
 /**
  * Repository - Scenes
- * Summary: Quản lý truy vấn dữ liệu cho scene listing và scene search.
+ * Summary: Quản lý truy vấn dữ liệu cho scene listing, search, recommend, và detail.
  */
 
 /**
@@ -94,6 +105,47 @@ export async function findUserLevel(userId: string) {
 }
 
 /**
+ * Query Objective - findRecommendationUserContext
+ * Summary: Lấy context user cần thiết để gợi ý scene theo điểm yếu.
+ * Query Shape: findUnique + select level, learningGoal, selfAssessment.
+ */
+export async function findRecommendationUserContext(userId: string) {
+  return await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      level: true,
+      learningGoal: true,
+      selfAssessment: true,
+    },
+  });
+}
+
+/**
+ * Query Objective - findRecentCompletedSessionsForRecommendation
+ * Summary: Lấy completed sessions gần nhất để service suy ra skill yếu.
+ * Query Shape: findMany theo userId + status COMPLETED + orderBy endedAt desc.
+ */
+export async function findRecentCompletedSessionsForRecommendation(userId: string, take: number) {
+  return await prisma.session.findMany({
+    where: {
+      userId,
+      status: 'COMPLETED',
+    },
+    orderBy: {
+      endedAt: 'desc',
+    },
+    take,
+    select: {
+      id: true,
+      sceneId: true,
+      grammarScore: true,
+      vocabularyScore: true,
+      naturalnessScore: true,
+    },
+  });
+}
+
+/**
  * Query Objective - findSearchSceneCandidates
  * Summary: Lấy candidate scenes khớp text search trước khi service ranking.
  * Query Shape: findMany theo OR text match ở scene fields và vocabulary.
@@ -124,6 +176,31 @@ export async function findSearchSceneCandidates(query: string, allowedLevels: Le
     },
     take,
     select: searchSceneSelect,
+  });
+}
+
+/**
+ * Query Objective - findRecommendationSceneCandidates
+ * Summary: Lấy scene candidate cho endpoint recommend theo level và optional excludeIds.
+ * Query Shape: findMany theo isActive + difficulty in[] + optional notIn + select mission/vocab count.
+ */
+export async function findRecommendationSceneCandidates(
+  allowedLevels: Level[],
+  take: number,
+  excludeIds: string[] = [],
+) {
+  return await prisma.scene.findMany({
+    where: {
+      isActive: true,
+      difficulty: { in: allowedLevels },
+      id: excludeIds.length > 0 ? { notIn: excludeIds } : undefined,
+    },
+    take,
+    orderBy: [
+      { difficulty: 'asc' },
+      { title: 'asc' },
+    ],
+    select: recommendationCandidateSelect,
   });
 }
 

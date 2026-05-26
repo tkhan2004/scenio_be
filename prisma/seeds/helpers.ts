@@ -61,6 +61,7 @@ export async function upsertSeedSession(args: {
   vocabularyScore?: number | null;
   naturalnessScore?: number | null;
   xpEarned?: number;
+  xpGrantedAt?: Date | null;
   hintCount?: number;
   endedAt?: Date | null;
 }) {
@@ -82,6 +83,7 @@ export async function upsertSeedSession(args: {
     vocabularyScore: args.vocabularyScore ?? null,
     naturalnessScore: args.naturalnessScore ?? null,
     xpEarned: args.xpEarned ?? 0,
+    xpGrantedAt: args.xpGrantedAt ?? null,
     hintCount: args.hintCount ?? 0,
     endedAt: args.endedAt ?? null,
   };

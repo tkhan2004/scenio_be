@@ -1,6 +1,10 @@
 import { NextFunction, Request, Response } from 'express';
 import { fail, ok } from '../../utils/response';
-import { UpdateMeInput, UpdateOnboardingInput } from '../../schemas/users';
+import {
+  AddXpInput,
+  UpdateMeInput,
+  UpdateOnboardingInput,
+} from '../../schemas/users';
 import * as usersService from './users.service';
 
 /**
@@ -59,6 +63,27 @@ export const updateMeController = async (req: Request, res: Response, next: Next
 
     const input = (req as any).validatedBody as UpdateMeInput;
     const result = await usersService.updateMe(userId, input);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - addXpController
+ * Summary: Cộng XP cho session COMPLETED của user hiện tại.
+ * Inputs: req, res, next.
+ * Behavior: Lấy userId + validatedBody -> gọi service -> trả totalXp, streak, missionsCompleted.
+ */
+export const addXpController = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user?.id as string | undefined;
+    if (!userId) {
+      return fail(res, 'Thiếu thông tin người dùng', 'UNAUTHORIZED', 401);
+    }
+
+    const input = (req as any).validatedBody as AddXpInput;
+    const result = await usersService.addXp(userId, input);
     ok(res, result);
   } catch (error) {
     next(error);

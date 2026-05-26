@@ -1,7 +1,13 @@
 import { NextFunction, Request, Response } from 'express';
 import { fail, ok } from '../../utils/response';
+import {
+  GetSceneParams,
+  GetSceneVoicesParams,
+  ListScenesQuery,
+  RecommendScenesQuery,
+  SearchScenesQuery,
+} from '../../schemas/scenes';
 import * as scenesService from './scenes.service';
-import { GetSceneParams, ListScenesQuery, SearchScenesQuery } from '../../schemas/scenes';
 
 /**
  * HTTP Handler - listScenes
@@ -41,6 +47,27 @@ export const searchScenes = async (req: Request, res: Response, next: NextFuncti
 };
 
 /**
+ * HTTP Handler - recommendScenes
+ * Summary: Gợi ý scene phù hợp nhất với skill yếu hiện tại của user.
+ * Inputs: req, res, next.
+ * Behavior: Lấy userId + validatedQuery -> gọi service -> trả response chuẩn.
+ */
+export const recommendScenes = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user?.id as string | undefined;
+    if (!userId) {
+      return fail(res, 'Thiếu thông tin người dùng', 'UNAUTHORIZED', 401);
+    }
+
+    const query = (req as any).validatedQuery as RecommendScenesQuery;
+    const result = await scenesService.recommendScenes(userId, query);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * HTTP Handler - getScene
  * Summary: Lấy chi tiết đầy đủ của một scene active.
  * Inputs: req, res, next.
@@ -50,6 +77,22 @@ export const getScene = async (req: Request, res: Response, next: NextFunction) 
   try {
     const params = (req as any).validatedParams as GetSceneParams;
     const result = await scenesService.getSceneById(params.id);
+    ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - getSceneVoices
+ * Summary: Lấy quick picks và voice catalog phù hợp cho scene hiện tại.
+ * Inputs: req, res, next.
+ * Behavior: Lấy validatedParams -> gọi service -> trả response chuẩn.
+ */
+export const getSceneVoices = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const params = (req as any).validatedParams as GetSceneVoicesParams;
+    const result = await scenesService.getSceneVoices(params.id);
     ok(res, result);
   } catch (error) {
     next(error);

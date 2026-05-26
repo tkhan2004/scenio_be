@@ -105,30 +105,135 @@ export async function seedActivityData(input: ActivitySeedInput): Promise<Activi
     isMastered: boolean;
     reviewedAt?: Date | null;
   }) {
-    const existing = await prisma.userVocabulary.findUnique({
-      where: {
-        userId_sceneVocabularyId: {
-          userId: args.userId,
-          sceneVocabularyId: args.sceneVocabularyId,
-        },
+    const sceneVocabulary = await prisma.sceneVocabulary.findUnique({
+      where: { id: args.sceneVocabularyId },
+      select: {
+        id: true,
+        word: true,
+        definition: true,
       },
-      select: { id: true },
+    });
+
+    if (!sceneVocabulary) {
+      throw new Error(`Scene vocabulary ${args.sceneVocabularyId} not found`);
+    }
+
+    const normalizedWord = sceneVocabulary.word.trim().toLowerCase();
+    const existing = await prisma.userVocabulary.findFirst({
+      where: {
+        userId: args.userId,
+        normalizedWord,
+      },
+      select: { id: true, encounterCount: true },
     });
 
     const data = {
       userId: args.userId,
       sceneVocabularyId: args.sceneVocabularyId,
+      normalizedWord,
+      word: sceneVocabulary.word,
+      definition: sceneVocabulary.definition,
       sourceSessionId: args.sourceSessionId ?? null,
       isMastered: args.isMastered,
+      encounterCount: existing?.encounterCount ?? 1,
+      lastSeenAt: args.reviewedAt ?? new Date(),
       reviewedAt: args.reviewedAt ?? null,
     };
 
-    return existing
+    const vocabulary = existing
       ? prisma.userVocabulary.update({
           where: { id: existing.id },
           data,
         })
       : prisma.userVocabulary.create({ data });
+
+    const saved = await vocabulary;
+
+    if (args.sourceSessionId) {
+      const occurrence = await prisma.userVocabularyOccurrence.findFirst({
+        where: {
+          userVocabularyId: saved.id,
+          sessionId: args.sourceSessionId,
+        },
+        select: { id: true },
+      });
+
+      if (!occurrence) {
+        await prisma.userVocabularyOccurrence.create({
+          data: {
+            userVocabularyId: saved.id,
+            userId: args.userId,
+            sessionId: args.sourceSessionId,
+            sampleSentence: null,
+          },
+        });
+      }
+    }
+
+    return saved;
+  }
+
+  async function upsertManualUserVocabulary(args: {
+    userId: string;
+    word: string;
+    definition: string;
+    sourceSessionId?: string | null;
+    isMastered: boolean;
+    reviewedAt?: Date | null;
+  }) {
+    const normalizedWord = args.word.trim().toLowerCase();
+    const existing = await prisma.userVocabulary.findFirst({
+      where: {
+        userId: args.userId,
+        normalizedWord,
+      },
+      select: { id: true, encounterCount: true },
+    });
+
+    const data = {
+      userId: args.userId,
+      sceneVocabularyId: null,
+      normalizedWord,
+      word: args.word,
+      definition: args.definition,
+      sourceSessionId: args.sourceSessionId ?? null,
+      isMastered: args.isMastered,
+      encounterCount: existing?.encounterCount ?? 1,
+      lastSeenAt: args.reviewedAt ?? new Date(),
+      reviewedAt: args.reviewedAt ?? null,
+    };
+
+    const vocabulary = existing
+      ? prisma.userVocabulary.update({
+          where: { id: existing.id },
+          data,
+        })
+      : prisma.userVocabulary.create({ data });
+
+    const saved = await vocabulary;
+
+    if (args.sourceSessionId) {
+      const occurrence = await prisma.userVocabularyOccurrence.findFirst({
+        where: {
+          userVocabularyId: saved.id,
+          sessionId: args.sourceSessionId,
+        },
+        select: { id: true },
+      });
+
+      if (!occurrence) {
+        await prisma.userVocabularyOccurrence.create({
+          data: {
+            userVocabularyId: saved.id,
+            userId: args.userId,
+            sessionId: args.sourceSessionId,
+            sampleSentence: null,
+          },
+        });
+      }
+    }
+
+    return saved;
   }
 
   await Promise.all([
@@ -213,6 +318,7 @@ export async function seedActivityData(input: ActivitySeedInput): Promise<Activi
     vocabularyScore: 78,
     naturalnessScore: 82,
     xpEarned: 60,
+    xpGrantedAt: dateTime('2026-04-02T10:31:15.000Z'),
     hintCount: 0,
     endedAt: dateTime('2026-04-02T10:30:00.000Z'),
   });
@@ -258,6 +364,47 @@ export async function seedActivityData(input: ActivitySeedInput): Promise<Activi
     },
   ]);
 
+  const learnerAbandoned = await upsertSeedSession({
+    userId: users.learner.id,
+    sceneId: scenes.restaurantOrder.id,
+    startedAt: dateTime('2026-04-03T18:00:00.000Z'),
+    status: SessionStatus.ABANDONED,
+    xpEarned: 0,
+    hintCount: 1,
+    endedAt: dateTime('2026-04-03T18:08:00.000Z'),
+  });
+
+  await resetSessionMessages(learnerAbandoned, [
+    {
+      role: MessageRole.AI,
+      content: 'Hello, welcome in. Would you like to start with a drink or look at the menu first?',
+      turnIndex: 0,
+      createdAt: dateTime('2026-04-03T18:00:10.000Z'),
+    },
+    {
+      role: MessageRole.USER,
+      content: 'Could I see the menu first, please?',
+      turnIndex: 1,
+      hasError: false,
+      isGood: true,
+      createdAt: dateTime('2026-04-03T18:00:28.000Z'),
+    },
+    {
+      role: MessageRole.AI,
+      content: 'Of course. I can also recommend a pasta if you like.',
+      turnIndex: 2,
+      createdAt: dateTime('2026-04-03T18:00:42.000Z'),
+    },
+    {
+      role: MessageRole.USER,
+      content: 'Thanks, I need a minute to decide.',
+      turnIndex: 3,
+      hasError: false,
+      isGood: true,
+      createdAt: dateTime('2026-04-03T18:01:05.000Z'),
+    },
+  ]);
+
   const beginnerCompleted = await upsertSeedSession({
     userId: users.beginner.id,
     sceneId: scenes.hotelCheckIn.id,
@@ -267,6 +414,7 @@ export async function seedActivityData(input: ActivitySeedInput): Promise<Activi
     vocabularyScore: 68,
     naturalnessScore: 70,
     xpEarned: 35,
+    xpGrantedAt: dateTime('2026-04-03T09:21:15.000Z'),
     hintCount: 1,
     endedAt: dateTime('2026-04-03T09:20:00.000Z'),
   });
@@ -291,6 +439,42 @@ export async function seedActivityData(input: ActivitySeedInput): Promise<Activi
       content: 'Great. Breakfast is on the second floor from 6:30 to 10.',
       turnIndex: 2,
       createdAt: dateTime('2026-04-03T09:00:40.000Z'),
+    },
+  ]);
+
+  const xpTesterPendingXp = await upsertSeedSession({
+    userId: users.xpTester.id,
+    sceneId: scenes.pharmacyVisit.id,
+    startedAt: dateTime('2026-04-04T14:00:00.000Z'),
+    status: SessionStatus.COMPLETED,
+    grammarScore: 82,
+    vocabularyScore: 86,
+    naturalnessScore: 80,
+    xpEarned: 50,
+    hintCount: 0,
+    endedAt: dateTime('2026-04-04T14:12:00.000Z'),
+  });
+
+  await resetSessionMessages(xpTesterPendingXp, [
+    {
+      role: MessageRole.AI,
+      content: 'Hi, how can I help you today?',
+      turnIndex: 0,
+      createdAt: dateTime('2026-04-04T14:00:08.000Z'),
+    },
+    {
+      role: MessageRole.USER,
+      content: 'I have a sore throat and I would like something mild for it.',
+      turnIndex: 1,
+      hasError: false,
+      isGood: true,
+      createdAt: dateTime('2026-04-04T14:00:24.000Z'),
+    },
+    {
+      role: MessageRole.AI,
+      content: 'I can suggest lozenges. Please take one tablet after dinner if the pain gets worse.',
+      turnIndex: 2,
+      createdAt: dateTime('2026-04-04T14:00:49.000Z'),
     },
   ]);
 
@@ -332,13 +516,22 @@ export async function seedActivityData(input: ActivitySeedInput): Promise<Activi
       sourceSessionId: beginnerCompleted.id,
       isMastered: false,
     }),
+    upsertManualUserVocabulary({
+      userId: users.learner.id,
+      word: 'queue number',
+      definition: 'a number that shows your turn while waiting in line',
+      sourceSessionId: learnerCompleted.id,
+      isMastered: false,
+    }),
   ]);
 
   return {
     sessions: {
       learnerActive,
       learnerCompleted,
+      learnerAbandoned,
       beginnerCompleted,
+      xpTesterPendingXp,
     },
   };
 }
