@@ -3,6 +3,7 @@ import { ok } from '../../utils/response';
 import {
   CompleteLearningPlanStepParams,
   GetLearningPlanCompletionSummaryParams,
+  StartNextLearningPlanParams,
 } from '../../schemas/learning-plan';
 import * as learningPlanService from './learning-plan.service';
 
@@ -42,6 +43,17 @@ export const getLearningPlanCompletionSummary = async (req: Request, res: Respon
     const params = (req as any).validatedParams as GetLearningPlanCompletionSummaryParams;
     const result = await learningPlanService.getLearningPlanCompletionSummary(userId, params.id);
     ok(res, result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const startNextLearningPlan = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user.id as string;
+    const params = (req as any).validatedParams as StartNextLearningPlanParams;
+    const result = await learningPlanService.startNextLearningPlan(userId, params.id);
+    ok(res, result, 201);
   } catch (error) {
     next(error);
   }

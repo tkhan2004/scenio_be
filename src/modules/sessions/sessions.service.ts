@@ -685,7 +685,11 @@ async function completeSessionWithEvaluation(
     spokenCoaching,
     nextLearningAction: buildNextLearningAction({
       scores: evaluation.scores,
-      feedbackItems: evaluation.feedback,
+      feedbackItems: evaluation.feedback.map((item) => ({
+        hasError: item.hasError,
+        errorType: item.errorType,
+        subtypes: item.feedbackDetails.issues.map((issue) => issue.subtype).filter((subtype): subtype is string => Boolean(subtype)),
+      })),
       sourceTitle: getSessionConversationSource(session).title,
     }),
     rewards: {

@@ -11,6 +11,7 @@ import prisma from '../../config/database';
 import { CompleteLearningPlanStepParams } from '../../schemas/learning-plan';
 import * as notificationsService from '../notifications/notifications.service';
 import * as scenesService from '../scenes/scenes.service';
+import * as usersRepo from '../users/users.repository';
 import * as learningPlanRepo from './learning-plan.repository';
 
 type PlanRecord = learningPlanRepo.LearningPlanRecord;
@@ -117,8 +118,10 @@ type RoadmapMeta = {
 
 type RoadmapLifecycle = {
   completedAt?: string | null;
+  rewardGrantedAt?: string | null;
   completionNotificationSentAt?: string | null;
   lastReminderDate?: string | null;
+  nextRoadmapStartedAt?: string | null;
 };
 
 type RoadmapSnapshot = {
@@ -127,6 +130,10 @@ type RoadmapSnapshot = {
   roadmapMeta?: RoadmapMeta;
   roadmapLifecycle?: RoadmapLifecycle;
 };
+
+type LearningPlanUserContext = NonNullable<
+  Awaited<ReturnType<typeof learningPlanRepo.findUserLearningContext>>
+>;
 
 const STUDY_FREQUENCY_WEEKLY_TARGET: Record<string, number> = {
   LIGHT: 2,
@@ -330,6 +337,22 @@ function getStepOpenAction(type: LearningPlanStepType) {
     case LearningPlanStepType.SCENE:
     default:
       return 'SCENE_DETAIL';
+  }
+}
+
+function ensureUserReadyForLearningPlan(user: LearningPlanUserContext) {
+  if (!user.onboardingCompletedAt) {
+    throw Object.assign(new Error('Người dùng chưa hoàn tất onboarding để tạo learning plan'), {
+      code: 'LEARNING_PLAN_NOT_READY',
+      status: 409,
+    });
+  }
+
+  if (!user.level || !user.learningGoal || !user.studyFrequency || !user.selfAssessment) {
+    throw Object.assign(new Error('Thiếu dữ liệu học tập để tạo learning plan'), {
+      code: 'LEARNING_PLAN_CONTEXT_INCOMPLETE',
+      status: 409,
+    });
   }
 }
 
@@ -549,7 +572,7 @@ async function maybeMarkPlanCompleted(
     completedAt: completedAt.toISOString(),
   };
 
-  const updatedPlan = lifecycle.completedAt
+  let updatedPlan = lifecycle.completedAt
     ? plan
     : await learningPlanRepo.updateLearningPlanById(
         plan.id,
@@ -560,6 +583,42 @@ async function maybeMarkPlanCompleted(
           }) as unknown as Prisma.InputJsonValue,
         },
       );
+
+  const updatedLifecycle = getRoadmapLifecycle(updatedPlan.sourceSnapshot);
+  if (!updatedLifecycle.rewardGrantedAt) {
+    updatedPlan = await prisma.$transaction(async (tx) => {
+      const currentPlan = await learningPlanRepo.findOwnedLearningPlanById(userId, updatedPlan.id, tx);
+      if (!currentPlan) {
+        throw Object.assign(new Error('Không tìm thấy learning plan để grant reward roadmap'), {
+          code: 'LEARNING_PLAN_NOT_FOUND',
+          status: 404,
+        });
+      }
+
+      if (getRoadmapLifecycle(currentPlan.sourceSnapshot).rewardGrantedAt) {
+        return currentPlan;
+      }
+
+      await usersRepo.updateUserById(userId, {
+        totalXp: {
+          increment: roadmapMeta.reward.xpBonus,
+        },
+      }, tx);
+
+      return learningPlanRepo.updateLearningPlanById(
+        currentPlan.id,
+        {
+          sourceSnapshot: buildUpdatedSourceSnapshot(currentPlan.sourceSnapshot, {
+            roadmapLifecycle: {
+              ...getRoadmapLifecycle(currentPlan.sourceSnapshot),
+              rewardGrantedAt: new Date().toISOString(),
+            },
+          }) as unknown as Prisma.InputJsonValue,
+        },
+        tx,
+      );
+    });
+  }
 
   if (!getRoadmapLifecycle(updatedPlan.sourceSnapshot).completionNotificationSentAt) {
     try {
@@ -869,6 +928,11 @@ function countIssuesByType(feedbackItems: Array<{ errorType: ErrorType | null; h
 export async function getCurrentLearningPlan(userId: string) {
   const existing = await learningPlanRepo.findActiveLearningPlan(userId);
   if (!existing) {
+    const user = await learningPlanRepo.findUserLearningContext(userId);
+    if (!user) {
+      throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+    }
+    ensureUserReadyForLearningPlan(user);
     return generateLearningPlan(userId, { notify: false });
   }
 
@@ -903,6 +967,7 @@ export async function generateLearningPlan(
   options: {
     notify?: boolean;
     notificationType?: LearningPlanNotificationKind;
+    forcedFocusSkill?: LearningFocusSkill;
   } = {},
 ) {
   const [user, recentSessions] = await Promise.all([
@@ -912,8 +977,9 @@ export async function generateLearningPlan(
   if (!user) {
     throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
   }
+  ensureUserReadyForLearningPlan(user);
 
-  const focusSkill = getFocusFromSessions(recentSessions, user.selfAssessment);
+  const focusSkill = options.forcedFocusSkill ?? getFocusFromSessions(recentSessions, user.selfAssessment);
   const weeklyTarget = getWeeklyTarget(user.studyFrequency);
   const steps = await buildPlanSteps(userId, focusSkill);
   const roadmapMeta = buildRoadmapMeta({
@@ -950,8 +1016,10 @@ export async function generateLearningPlan(
         roadmapMeta,
         roadmapLifecycle: {
           completedAt: null,
+          rewardGrantedAt: null,
           completionNotificationSentAt: null,
           lastReminderDate: null,
+          nextRoadmapStartedAt: null,
         },
       } as unknown as Prisma.InputJsonValue,
       steps: {
@@ -997,6 +1065,72 @@ export async function refreshLearningPlan(userId: string) {
     notify: true,
     notificationType: NotificationType.LEARNING_PLAN_REFRESHED,
   });
+}
+
+/**
+ * Function Objective - startNextLearningPlan
+ * Summary: Chốt roadmap đã completed và tạo roadmap kế tiếp theo focus gợi ý.
+ * Inputs: userId và planId của roadmap đã hoàn thành.
+ * Behavior: Kiểm tra ownership/completion -> generate roadmap mới theo next focus -> ghi dấu transition để idempotent.
+ * Returns: Completion summary của plan cũ và roadmap mới để mobile chuyển màn.
+ */
+export async function startNextLearningPlan(userId: string, planId: string) {
+  const existingPlan = await learningPlanRepo.findOwnedLearningPlanById(userId, planId);
+  if (!existingPlan) {
+    throw Object.assign(new Error('Không tìm thấy learning plan'), {
+      code: 'LEARNING_PLAN_NOT_FOUND',
+      status: 404,
+    });
+  }
+
+  const previousPlan = await buildLearningPlanResponse(userId, existingPlan);
+  if (!previousPlan.completionSummary) {
+    throw Object.assign(new Error('Roadmap hiện tại chưa hoàn thành để chuyển sang bước tiếp theo'), {
+      code: 'LEARNING_PLAN_NOT_COMPLETED',
+      status: 409,
+    });
+  }
+
+  const latestPlan = await learningPlanRepo.findOwnedLearningPlanById(userId, planId);
+  if (!latestPlan) {
+    throw Object.assign(new Error('Không tìm thấy learning plan sau khi đồng bộ completion'), {
+      code: 'LEARNING_PLAN_NOT_FOUND',
+      status: 404,
+    });
+  }
+
+  const latestLifecycle = getRoadmapLifecycle(latestPlan.sourceSnapshot);
+  if (latestLifecycle.nextRoadmapStartedAt) {
+    const activePlan = await learningPlanRepo.findActiveLearningPlan(userId);
+    if (activePlan && activePlan.id !== planId) {
+      return {
+        previousPlanId: planId,
+        completionSummary: previousPlan.completionSummary,
+        nextPlan: await buildLearningPlanResponse(userId, activePlan),
+      };
+    }
+  }
+
+  const nextPlan = await generateLearningPlan(userId, {
+    notify: true,
+    notificationType: NotificationType.LEARNING_PLAN_REFRESHED,
+    forcedFocusSkill: previousPlan.completionSummary.nextRoadmap.focusSkill,
+  });
+
+  await learningPlanRepo.updateLearningPlanById(planId, {
+    sourceSnapshot: buildUpdatedSourceSnapshot(latestPlan.sourceSnapshot, {
+      roadmapLifecycle: {
+        ...latestLifecycle,
+        nextRoadmapStartedAt: new Date().toISOString(),
+      },
+    }) as unknown as Prisma.InputJsonValue,
+  });
+
+  return {
+    previousPlanId: planId,
+    completionSummary: previousPlan.completionSummary,
+    nextPlan,
+  };
 }
 
 /**
@@ -1087,6 +1221,7 @@ export async function generateLearningPlanBestEffort(
   options: {
     notify?: boolean;
     notificationType?: LearningPlanNotificationKind;
+    forcedFocusSkill?: LearningFocusSkill;
   } = {},
 ) {
   try {

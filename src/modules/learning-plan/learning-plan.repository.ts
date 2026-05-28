@@ -62,6 +62,7 @@ export async function findUserLearningContext(userId: string) {
       studyFrequency: true,
       selfAssessment: true,
       lastActiveDate: true,
+      onboardingCompletedAt: true,
     },
   });
 }
