@@ -166,7 +166,7 @@ export async function seedVoices(scenes: SeedEntityMap<Scene>): Promise<VoicePre
       locale: 'en-US',
       accent: 'American',
       providerVoiceId: maleVoiceId,
-      realtimeVoiceId: 'onyx',
+      realtimeVoiceId: 'cedar',
       styleTags: ['work', 'direct', 'structured'],
       sampleText: 'Let us keep this update concise. What did you finish and what is blocking you?',
       latencyTier: 'balanced',

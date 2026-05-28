@@ -80,6 +80,27 @@ Your job:
 - sound like a believable human conversation partner`;
 }
 
+function uniqueValues(values: Array<string | null | undefined>) {
+  return values
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .filter((value, index, array) => array.indexOf(value) === index);
+}
+
+function getRealtimeVoiceCandidates(
+  selectedVoice: string,
+  gender: string | null | undefined,
+  defaultVoice: string,
+) {
+  const genderFallbacks = gender === 'MALE'
+    ? ['cedar', 'alloy']
+    : gender === 'FEMALE'
+      ? ['marin', 'verse', 'shimmer']
+      : ['marin', 'cedar', 'alloy'];
+
+  return uniqueValues([selectedVoice, ...genderFallbacks, defaultVoice]);
+}
+
 /**
  * Function Objective - createRealtimeTokenForSession
  * Summary: Gọi OpenAI Realtime API để mint client secret cho session ACTIVE hiện tại.
@@ -96,22 +117,33 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
   const realtimeModels = realtimePlan.models.filter((model) => model.provider === AiProvider.OPENAI);
   const sttModels = sttPlan.models.filter((model) => model.provider === AiProvider.OPENAI);
   const candidateRealtimeModels = realtimeModels.length > 0 ? realtimeModels.map((model) => model.modelId) : [defaults.model];
+  const candidateVoices = getRealtimeVoiceCandidates(
+    selectedVoice,
+    session.voiceProfile?.gender ?? null,
+    defaults.voice,
+  );
   const transcriptionModel = sttModels[0]?.modelId ?? defaults.transcriptionModel;
 
   let realtime: Awaited<ReturnType<typeof createRealtimeClientSecret>> | null = null;
   const errors: string[] = [];
 
   for (const realtimeModel of candidateRealtimeModels) {
-    try {
-      realtime = await createRealtimeClientSecret({
-        instructions,
-        voice: selectedVoice,
-        model: realtimeModel,
-        transcriptionModel,
-      });
+    for (const voice of candidateVoices) {
+      try {
+        realtime = await createRealtimeClientSecret({
+          instructions,
+          voice,
+          model: realtimeModel,
+          transcriptionModel,
+        });
+        break;
+      } catch (error: any) {
+        errors.push(`${realtimeModel}/${voice}: ${error?.message ?? 'unknown error'}`);
+      }
+    }
+
+    if (realtime) {
       break;
-    } catch (error: any) {
-      errors.push(`${realtimeModel}: ${error?.message ?? 'unknown error'}`);
     }
   }
 
@@ -143,7 +175,7 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
           gender: session.voiceProfile.gender,
           locale: session.voiceProfile.locale,
           accent: session.voiceProfile.accent,
-          realtimeVoiceId: session.voiceProfile.realtimeVoiceId,
+          realtimeVoiceId: realtime.voice,
         }
       : {
           id: null,
@@ -151,7 +183,7 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
           gender: null,
           locale: null,
           accent: null,
-          realtimeVoiceId: selectedVoice,
+          realtimeVoiceId: realtime.voice,
         },
   };
 }

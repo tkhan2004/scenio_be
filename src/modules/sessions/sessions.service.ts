@@ -230,6 +230,38 @@ function getEstimatedMinutesFromLength(conversationLength?: string | null) {
   }
 }
 
+function getConversationLengthFromMinutes(minutes?: number | null) {
+  if (!minutes) return 'MEDIUM';
+  if (minutes <= 9) return 'SHORT';
+  if (minutes >= 16) return 'LONG';
+  return 'MEDIUM';
+}
+
+function getTargetTurnsFromLength(conversationLength?: string | null) {
+  switch (conversationLength) {
+    case 'SHORT':
+      return 3;
+    case 'LONG':
+      return 7;
+    case 'MEDIUM':
+    default:
+      return 5;
+  }
+}
+
+function getTargetTurnsFromMinutes(minutes?: number | null) {
+  if (!minutes) return getTargetTurnsFromLength('MEDIUM');
+  return Math.max(3, Math.min(12, Math.round(minutes / 2.5)));
+}
+
+function getTargetTurnsForCustomConfig(conversationLength?: string | null, estimatedMinutes?: number | null) {
+  if (estimatedMinutes) {
+    return getTargetTurnsFromMinutes(estimatedMinutes);
+  }
+
+  return getTargetTurnsFromLength(conversationLength);
+}
+
 /**
  * Helper - getCustomPracticeDisplayTitle
  * Summary: Tạo title hiển thị gọn cho custom practice session.
@@ -330,7 +362,8 @@ Your persona:
 
 Coaching rules:
 - Difficulty target: ${difficulty}
-- Conversation length: ${input.learningConfig.conversationLength || 'MEDIUM'}
+- Conversation length: ${input.learningConfig.conversationLength || getConversationLengthFromMinutes(input.learningConfig.targetMinutes)}
+- Target duration: ${input.learningConfig.targetMinutes || getEstimatedMinutesFromLength(input.learningConfig.conversationLength)} minutes
 - Correction style: ${input.learningConfig.correctionStyle || 'END_ONLY'}
 - Hint frequency: ${input.learningConfig.hintFrequency || 'LOW'}
 - Response complexity: ${input.learningConfig.responseComplexity || 'BALANCED'}
@@ -359,6 +392,12 @@ function getActiveSessionConflictDetails(
   const characterName = activeSession.sourceType === 'CUSTOM_PRACTICE'
     ? activeSession.customPracticeConfig?.aiDisplayName ?? 'AI'
     : activeSession.scene?.characterName ?? 'AI';
+  const targetTurns = activeSession.sourceType === 'CUSTOM_PRACTICE'
+    ? getTargetTurnsForCustomConfig(
+        activeSession.customPracticeConfig?.conversationLength,
+        activeSession.customPracticeConfig?.estimatedMinutes,
+      )
+    : 3;
 
   return [
     { field: 'activeSession.id', message: activeSession.id },
@@ -368,6 +407,7 @@ function getActiveSessionConflictDetails(
     { field: 'activeSession.sceneTitle', message: title },
     { field: 'activeSession.characterName', message: characterName },
     { field: 'activeSession.startedAt', message: activeSession.startedAt.toISOString() },
+    { field: 'activeSession.targetTurns', message: String(targetTurns) },
   ];
 }
 
@@ -417,6 +457,8 @@ function getSessionResultSource(
       category: session.customPracticeConfig.contextType,
       difficulty: session.customPracticeConfig.difficulty,
       description: session.customPracticeConfig.topicSummary,
+      missionText: session.customPracticeConfig.missionText,
+      estimatedMinutes: session.customPracticeConfig.estimatedMinutes,
       characterName: session.customPracticeConfig.aiDisplayName,
       characterRole: session.customPracticeConfig.aiRole,
     };
@@ -434,6 +476,8 @@ function getSessionResultSource(
     category: session.scene.category,
     difficulty: session.scene.difficulty,
     description: session.scene.description,
+    missionText: session.scene.missionText,
+    estimatedMinutes: session.scene.estimatedMinutes,
     characterName: session.scene.characterName,
     characterRole: session.scene.characterRole,
   };
@@ -1094,6 +1138,7 @@ export async function startSession(userId: string, input: StartSessionInput) {
     sourceType: createdSession.sourceType,
     openingMessage,
     modality: createdSession.modality,
+    targetTurns: 3,
     selectedVoice: {
       id: selectedVoice.id,
       displayName: selectedVoice.displayName,
@@ -1139,10 +1184,14 @@ export async function startCustomSession(userId: string, input: StartCustomSessi
 
   const selectedVoice = resolvedVoice.voice;
   const difficulty = input.learningConfig.difficulty || input.userProfile.userEnglishLevel || user.level || Level.A2;
+  const conversationLength = input.learningConfig.conversationLength
+    ?? getConversationLengthFromMinutes(input.learningConfig.targetMinutes);
   const displayTitle = getCustomPracticeDisplayTitle(input);
   const displaySubtitle = getCustomPracticeDisplaySubtitle(input);
   const missionText = getCustomPracticeMissionText(input);
-  const estimatedMinutes = getEstimatedMinutesFromLength(input.learningConfig.conversationLength);
+  const estimatedMinutes = input.learningConfig.targetMinutes
+    ?? getEstimatedMinutesFromLength(conversationLength);
+  const targetTurns = getTargetTurnsFromMinutes(estimatedMinutes);
   const openingMessage = getCustomPracticeOpeningMessage(input);
   const systemPrompt = getCustomPracticeSystemPrompt(input);
 
@@ -1175,7 +1224,7 @@ export async function startCustomSession(userId: string, input: StartCustomSessi
         aiSpeechSpeed: input.aiPersona.aiSpeechSpeed ?? null,
         aiAccentPreference: input.aiPersona.aiAccentPreference?.trim(),
         difficulty,
-        conversationLength: input.learningConfig.conversationLength ?? null,
+        conversationLength,
         correctionStyle: input.learningConfig.correctionStyle ?? null,
         hintFrequency: input.learningConfig.hintFrequency ?? null,
         responseComplexity: input.learningConfig.responseComplexity ?? null,
@@ -1228,12 +1277,15 @@ export async function startCustomSession(userId: string, input: StartCustomSessi
     sourceType: createdSession.session.sourceType,
     openingMessage,
     modality: createdSession.session.modality,
+    targetTurns,
     customPractice: {
       id: createdSession.customConfig.id,
       displayTitle: createdSession.customConfig.displayTitle,
       displaySubtitle: createdSession.customConfig.displaySubtitle,
       contextType: createdSession.customConfig.contextType,
       difficulty: createdSession.customConfig.difficulty,
+      conversationLength,
+      targetMinutes: createdSession.customConfig.estimatedMinutes,
       topicSummary: createdSession.customConfig.topicSummary,
       missionText: createdSession.customConfig.missionText,
       estimatedMinutes: createdSession.customConfig.estimatedMinutes,
@@ -1549,6 +1601,12 @@ export async function getSessionResult(
       id: session.id,
       sourceType: session.sourceType,
       status: session.status,
+      targetTurns: session.sourceType === 'CUSTOM_PRACTICE'
+        ? getTargetTurnsForCustomConfig(
+            session.customPracticeConfig?.conversationLength,
+            session.customPracticeConfig?.estimatedMinutes,
+          )
+        : 3,
       modality: session.modality,
       voiceProvider: session.voiceProvider,
       providerSessionId: session.providerSessionId,
@@ -1572,8 +1630,10 @@ export async function getSessionResult(
             id: session.scene.id,
             title: session.scene.title,
             category: session.scene.category,
-            difficulty: session.scene.difficulty,
             description: session.scene.description,
+            missionText: session.scene.missionText,
+            difficulty: session.scene.difficulty,
+            estimatedMinutes: session.scene.estimatedMinutes,
             characterName: session.scene.characterName,
             characterRole: session.scene.characterRole,
           }
@@ -1585,6 +1645,8 @@ export async function getSessionResult(
             displaySubtitle: session.customPracticeConfig.displaySubtitle,
             contextType: session.customPracticeConfig.contextType,
             difficulty: session.customPracticeConfig.difficulty,
+            conversationLength: session.customPracticeConfig.conversationLength,
+            targetMinutes: session.customPracticeConfig.estimatedMinutes,
             topicSummary: session.customPracticeConfig.topicSummary,
             missionText: session.customPracticeConfig.missionText,
             estimatedMinutes: session.customPracticeConfig.estimatedMinutes,
@@ -1601,8 +1663,10 @@ export async function getSessionResult(
       sourceSummary: {
         title: source.title,
         category: source.category,
-        difficulty: source.difficulty,
         description: source.description,
+        missionText: source.missionText,
+        difficulty: source.difficulty,
+        estimatedMinutes: source.estimatedMinutes,
         characterName: source.characterName,
         characterRole: source.characterRole,
       },
