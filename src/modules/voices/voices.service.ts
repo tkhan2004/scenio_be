@@ -380,6 +380,7 @@ export async function resolveCustomPracticeVoiceSelection(
   voiceTone?: string | null,
 ) {
   const explicitVoice = voiceProfileId ? await voicesRepo.findVoiceById(voiceProfileId) : null;
+  const requestedGender = gender && gender !== VoiceGender.NEUTRAL ? gender : null;
 
   if (voiceProfileId && !explicitVoice) {
     throw Object.assign(new Error('Voice profile không tồn tại hoặc đã bị vô hiệu hóa'), {
@@ -388,14 +389,16 @@ export async function resolveCustomPracticeVoiceSelection(
     });
   }
 
-  if (explicitVoice) {
+  const explicitMatchesRequestedGender = !requestedGender || !explicitVoice || explicitVoice.gender === requestedGender;
+
+  if (explicitVoice && explicitMatchesRequestedGender) {
     return {
       voice: explicitVoice,
       policy: buildSelectionPolicy({
         source: 'EXPLICIT_SELECTION',
         usedFallback: false,
         requestedVoiceProfileId: voiceProfileId,
-        requestedGender: gender ?? null,
+        requestedGender,
         requestedAccentPreference: accentPreference,
         requestedVoiceTone: voiceTone,
         matchedGender: explicitVoice.gender,
@@ -413,14 +416,16 @@ export async function resolveCustomPracticeVoiceSelection(
     });
   }
 
-  const requestedGender = gender && gender !== VoiceGender.NEUTRAL ? gender : null;
-  const scoredVoices = allVoices
+  const genderMatchedVoices = requestedGender
+    ? allVoices.filter((voice) => voice.gender === requestedGender)
+    : allVoices;
+  const candidateVoices = genderMatchedVoices.length > 0 ? genderMatchedVoices : allVoices;
+  const scoredVoices = candidateVoices
     .map((voice) => {
       const matchedGender = requestedGender ? voice.gender === requestedGender : false;
       const matchedAccent = matchesAccent(voice, accentPreference);
       const matchedTone = matchesTone(voice, voiceTone);
-
-      const score = (matchedGender ? 50 : 0) + (matchedAccent ? 25 : 0) + (matchedTone ? 20 : 0);
+      const score = (matchedAccent ? 25 : 0) + (matchedTone ? 20 : 0);
 
       return {
         voice,
@@ -433,7 +438,7 @@ export async function resolveCustomPracticeVoiceSelection(
     .sort((a, b) => b.score - a.score || a.voice.displayName.localeCompare(b.voice.displayName));
 
   const bestMatch = scoredVoices[0];
-  if (bestMatch && bestMatch.score > 0) {
+  if (bestMatch && (bestMatch.score > 0 || Boolean(requestedGender))) {
     return {
       voice: bestMatch.voice,
       policy: buildSelectionPolicy({
@@ -450,17 +455,17 @@ export async function resolveCustomPracticeVoiceSelection(
     } satisfies ResolvedVoiceSelection;
   }
 
-  const fallbackVoice = allVoices[0];
+  const fallbackVoice = candidateVoices[0];
   return {
     voice: fallbackVoice,
     policy: buildSelectionPolicy({
       source: 'GLOBAL_FALLBACK',
-      usedFallback: true,
+      usedFallback: requestedGender ? genderMatchedVoices.length === 0 : true,
       requestedVoiceProfileId: voiceProfileId,
       requestedGender,
       requestedAccentPreference: accentPreference,
       requestedVoiceTone: voiceTone,
-      matchedGender: fallbackVoice.gender,
+      matchedGender: requestedGender && fallbackVoice.gender === requestedGender ? fallbackVoice.gender : null,
       matchedAccent: fallbackVoice.accent,
     }),
   } satisfies ResolvedVoiceSelection;
