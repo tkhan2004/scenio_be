@@ -474,6 +474,28 @@ function getTodayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function extractIssueSubtypes(feedbackDetails: unknown) {
+  if (!feedbackDetails || typeof feedbackDetails !== 'object' || !('issues' in feedbackDetails)) {
+    return [] as string[];
+  }
+
+  const issues = (feedbackDetails as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) {
+    return [] as string[];
+  }
+
+  return issues
+    .map((issue) => {
+      if (!issue || typeof issue !== 'object' || !('subtype' in issue)) {
+        return null;
+      }
+
+      const subtype = (issue as { subtype?: unknown }).subtype;
+      return typeof subtype === 'string' ? subtype : null;
+    })
+    .filter((subtype): subtype is string => Boolean(subtype));
+}
+
 function buildNextLearningAction(input: {
   scores: {
     grammar: number | null;
@@ -483,6 +505,7 @@ function buildNextLearningAction(input: {
   feedbackItems: Array<{
     hasError: boolean | null;
     errorType: ErrorType | null;
+    subtypes?: string[];
   }>;
   sourceTitle?: string | null;
 }) {
@@ -509,6 +532,20 @@ function buildNextLearningAction(input: {
       [ErrorType.NATURALNESS]: 0,
     },
   );
+  const nonEnglishCount = input.feedbackItems.filter((item) => (
+    item.hasError && item.subtypes?.includes('NON_ENGLISH_RESPONSE')
+  )).length;
+
+  if (nonEnglishCount > 0) {
+    return {
+      type: 'ENGLISH_ONLY_RETRY',
+      focus: 'NATURALNESS',
+      title: 'Retry this scene fully in English',
+      reason: `Detected ${nonEnglishCount} reply/replies that were not in English.`,
+      ctaLabel: 'Retry in English',
+      suggestedSceneQuery: input.sourceTitle ? `${input.sourceTitle} beginner english speaking` : 'beginner english speaking practice',
+    };
+  }
 
   if (weakest.key === 'grammar') {
     return {
@@ -668,6 +705,7 @@ async function completeSessionWithEvaluation(
     feedbackItems: evaluation.feedback.map((item) => ({
       hasError: item.hasError,
       errorType: item.errorType,
+      subtypes: item.feedbackDetails.issues.map((issue) => issue.subtype).filter((subtype): subtype is string => Boolean(subtype)),
     })),
   });
 
@@ -980,7 +1018,6 @@ export async function runLevelTest(userId: string, input: LevelTestInput): Promi
   }
 
   await sessionsRepo.completeLevelTest(userId, parsed.level);
-  await learningPlanService.generateLearningPlanBestEffort(userId);
 
   return {
     aiMessage: parsed.aiMessage,
@@ -1400,6 +1437,7 @@ export async function createSessionHint(
   const recentMessages = await sessionsRepo.findRecentMessagesForSession(session.id, 8);
   const source = getSessionConversationSource(session);
   const providerMessages = recentMessages
+    .filter((message) => !message.isHint)
     .slice()
     .reverse()
     .map<ProviderMessage>((message) => ({
@@ -1594,6 +1632,7 @@ export async function getSessionResult(
       feedbackItems: session.messages.map((message) => ({
         hasError: message.hasError,
         errorType: message.errorType,
+        subtypes: extractIssueSubtypes(message.feedbackDetails),
       })),
       sourceTitle: source.title,
     }),
