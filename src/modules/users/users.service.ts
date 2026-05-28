@@ -196,6 +196,8 @@ function isBadgeEligible(
       return metrics.highestAverageScore >= badge.conditionValue;
     case ConditionType.VOCAB_SAVED:
       return metrics.savedVocabulary >= badge.conditionValue;
+    case ConditionType.ROADMAP_COMPLETED:
+      return false;
     default:
       return false;
   }

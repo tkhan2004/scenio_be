@@ -1,4 +1,5 @@
 import {
+  ConditionType,
   ErrorType,
   LearningFocusSkill,
   LearningPlanStepStatus,
@@ -274,6 +275,14 @@ function getRoadmapReward(goal: string | null, level: Level) {
     xpBonus: DEFAULT_ROADMAP_XP_BONUS,
     unlocks: ['Next roadmap suggestion'],
   };
+}
+
+function getRoadmapBadgeDescription(planTitle: string) {
+  return `Complete the ${planTitle} roadmap.`;
+}
+
+function getRoadmapBadgeIconKey() {
+  return 'roadmap_completed';
 }
 
 function getStepReason(focusSkill: LearningFocusSkill, fallbackReason?: string | null) {
@@ -605,6 +614,14 @@ async function maybeMarkPlanCompleted(
         },
       }, tx);
 
+      await ensureRoadmapBadgeGranted({
+        userId,
+        badgeTitle: roadmapMeta.reward.badgeTitle,
+        badgeDescription: getRoadmapBadgeDescription(currentPlan.title),
+        xpReward: roadmapMeta.reward.xpBonus,
+        db: tx,
+      });
+
       return learningPlanRepo.updateLearningPlanById(
         currentPlan.id,
         {
@@ -919,6 +936,97 @@ function countIssuesByType(feedbackItems: Array<{ errorType: ErrorType | null; h
       [ErrorType.NATURALNESS]: 0,
     },
   );
+}
+
+async function ensureRoadmapBadgeDefinition(
+  title: string,
+  description: string,
+  xpReward: number,
+  db: Prisma.TransactionClient,
+) {
+  const existing = await usersRepo.findBadgeByTitleAndConditionType(
+    title,
+    ConditionType.ROADMAP_COMPLETED,
+    db,
+  );
+
+  if (!existing) {
+    return usersRepo.createBadge(
+      {
+        title,
+        description,
+        iconKey: getRoadmapBadgeIconKey(),
+        conditionType: ConditionType.ROADMAP_COMPLETED,
+        conditionValue: 1,
+        xpReward,
+        isActive: true,
+      },
+      db,
+    );
+  }
+
+  if (
+    existing.description !== description ||
+    existing.iconKey !== getRoadmapBadgeIconKey() ||
+    existing.conditionValue !== 1 ||
+    existing.xpReward !== xpReward ||
+    existing.isActive !== true
+  ) {
+    return usersRepo.updateBadgeById(
+      existing.id,
+      {
+        description,
+        iconKey: getRoadmapBadgeIconKey(),
+        conditionValue: 1,
+        xpReward,
+        isActive: true,
+      },
+      db,
+    );
+  }
+
+  return existing;
+}
+
+async function ensureRoadmapBadgeGranted(args: {
+  userId: string;
+  badgeTitle: string;
+  badgeDescription: string;
+  xpReward: number;
+  db: Prisma.TransactionClient;
+}) {
+  const badge = await ensureRoadmapBadgeDefinition(
+    args.badgeTitle,
+    args.badgeDescription,
+    args.xpReward,
+    args.db,
+  );
+  const existingUserBadge = await usersRepo.findUserBadgeByBadgeId(
+    args.userId,
+    badge.id,
+    args.db,
+  );
+
+  if (existingUserBadge) {
+    return {
+      badge,
+      wasNewlyEarned: false,
+    };
+  }
+
+  await usersRepo.createUserBadge(
+    {
+      userId: args.userId,
+      badgeId: badge.id,
+      earnedAt: new Date(),
+    },
+    args.db,
+  );
+
+  return {
+    badge,
+    wasNewlyEarned: true,
+  };
 }
 
 /**
