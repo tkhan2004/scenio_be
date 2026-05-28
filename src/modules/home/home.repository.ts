@@ -5,9 +5,12 @@ const homeSceneSelect = {
   id: true,
   title: true,
   category: true,
+  description: true,
+  missionText: true,
   difficulty: true,
   estimatedMinutes: true,
   characterName: true,
+  characterRole: true,
 } satisfies Prisma.SceneSelect;
 
 /**
@@ -87,6 +90,7 @@ export async function findInProgressSession(userId: string) {
         select: {
           displayTitle: true,
           aiDisplayName: true,
+          conversationLength: true,
         },
       },
       scene: {

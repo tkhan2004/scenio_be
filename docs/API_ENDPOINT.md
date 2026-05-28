@@ -168,9 +168,12 @@ Tải toàn bộ dữ liệu trang chủ trong **1 request duy nhất** để tr
         "id": "uuid",
         "title": "At the Coffee Shop",
         "category": "DAILY",
+        "description": "Order a drink and ask follow-up questions politely.",
+        "missionText": "Complete a simple cafe order and clarify your drink choice.",
         "difficulty": "A2",
         "estimatedMinutes": 6,
-        "characterName": "Mia"
+        "characterName": "Mia",
+        "characterRole": "Barista"
       }
     ]
   }
@@ -201,6 +204,7 @@ Lấy danh sách scene active, hỗ trợ filter và phân trang.
         "title": "At the Coffee Shop",
         "category": "DAILY",
         "description": "Order a drink and ask follow-up questions politely.",
+        "missionText": "Complete a simple cafe order and clarify your drink choice.",
         "difficulty": "A2",
         "estimatedMinutes": 6,
         "characterName": "Mia",
@@ -233,6 +237,7 @@ Tìm scene cho user hiện tại. Backend ưu tiên semantic search bằng pgvec
         "title": "Airport Check-in",
         "category": "TRAVEL",
         "description": "Check in luggage and ask about gate, boarding time, and seat.",
+        "missionText": "Complete the airport check-in conversation naturally.",
         "difficulty": "A2",
         "estimatedMinutes": 7,
         "characterName": "David",
@@ -273,6 +278,7 @@ Gợi ý scene cho bước học tiếp theo dựa trên level, goal, session hi
         "title": "At the Restaurant",
         "category": "DAILY",
         "description": "Order food and drinks, ask for a recommendation, and request the bill politely.",
+        "missionText": "Finish a full restaurant interaction from ordering to paying.",
         "difficulty": "A2",
         "estimatedMinutes": 6,
         "characterName": "Jake",
@@ -361,6 +367,8 @@ Lấy active learning plan hiện tại. Nếu user chưa có plan và đã hoà
           "id": "uuid",
           "title": "Airport Check-in",
           "category": "TRAVEL",
+          "description": "Check in luggage and ask about gate, boarding time, and seat.",
+          "missionText": "Complete the airport check-in conversation naturally.",
           "difficulty": "A2",
           "estimatedMinutes": 7,
           "characterName": "David",
@@ -1092,8 +1100,10 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
         "id": "uuid",
         "title": "Airport Check-in",
         "category": "TRAVEL",
-        "difficulty": "A2",
         "description": "Check in luggage and ask about gate, boarding time, and seat.",
+        "missionText": "Complete the airport check-in conversation naturally.",
+        "difficulty": "A2",
+        "estimatedMinutes": 7,
         "characterName": "David",
         "characterRole": "Check-in Staff"
       },
@@ -1101,8 +1111,10 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
       "sourceSummary": {
         "title": "Airport Check-in",
         "category": "TRAVEL",
-        "difficulty": "A2",
         "description": "Check in luggage and ask about gate, boarding time, and seat.",
+        "missionText": "Complete the airport check-in conversation naturally.",
+        "difficulty": "A2",
+        "estimatedMinutes": 7,
         "characterName": "David",
         "characterRole": "Check-in Staff"
       },

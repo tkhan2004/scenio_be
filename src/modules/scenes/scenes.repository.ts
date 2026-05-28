@@ -6,6 +6,7 @@ const sceneCardSelect = {
   title: true,
   category: true,
   description: true,
+  missionText: true,
   difficulty: true,
   estimatedMinutes: true,
   characterName: true,

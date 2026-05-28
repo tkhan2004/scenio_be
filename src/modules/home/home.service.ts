@@ -2,6 +2,18 @@ import { SceneCategory } from "@prisma/client";
 import * as homeRepo from "./home.repository";
 import * as missionsService from "../missions/missions.service";
 
+function getTargetTurnsFromConversationLength(conversationLength?: string | null) {
+  switch (conversationLength) {
+    case 'SHORT':
+      return 3;
+    case 'LONG':
+      return 7;
+    case 'MEDIUM':
+    default:
+      return 5;
+  }
+}
+
 /**
  * Helper - mapGoalToCategories
  * Summary: Map learningGoal sang thứ tự category ưu tiên cho home.
@@ -106,6 +118,13 @@ export async function getHome(userId: string) {
       ? inProgressSession.customPracticeConfig?.aiDisplayName ?? 'AI'
       : inProgressSession.scene?.characterName ?? 'AI'
     : null;
+  const inProgressTargetTurns = inProgressSession
+    ? inProgressSession.sourceType === 'CUSTOM_PRACTICE'
+      ? getTargetTurnsFromConversationLength(
+          inProgressSession.customPracticeConfig?.conversationLength,
+        )
+      : 3
+    : null;
 
   return {
     user: {
@@ -124,6 +143,7 @@ export async function getHome(userId: string) {
           sourceType: inProgressSession.sourceType,
           sceneTitle: inProgressTitle,
           characterName: inProgressCharacter,
+          targetTurns: inProgressTargetTurns,
           startedAt: inProgressSession.startedAt,
         }
       : null,

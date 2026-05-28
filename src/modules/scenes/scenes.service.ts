@@ -18,6 +18,7 @@ type SceneCardLike = SceneCard | SearchScene | RecommendationCandidate | {
   title: string;
   category: SceneCategory;
   description: string;
+  missionText?: string;
   difficulty: Level;
   estimatedMinutes: number;
   characterName: string;
@@ -46,6 +47,7 @@ function mapSceneCard(scene: SceneCardLike) {
     title: scene.title,
     category: scene.category,
     description: scene.description,
+    missionText: 'missionText' in scene ? scene.missionText : scene.description,
     difficulty: scene.difficulty,
     estimatedMinutes: scene.estimatedMinutes,
     characterName: scene.characterName,
