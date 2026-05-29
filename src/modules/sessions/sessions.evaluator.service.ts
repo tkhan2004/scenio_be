@@ -28,6 +28,11 @@ const aiEvaluationSchema = z.object({
     vocabulary: z.number(),
     naturalness: z.number(),
   }),
+  coaching: z.object({
+    summary: z.string().trim().min(1).max(420),
+    strengths: z.array(z.string().trim().min(1).max(220)).min(1).max(3),
+    improvements: z.array(z.string().trim().min(1).max(220)).min(1).max(3),
+  }).optional(),
   feedback: z.array(z.object({
     messageId: z.string(),
     hasError: z.boolean(),
@@ -81,6 +86,11 @@ export type SessionEvaluationResult = {
   };
   xpEarned: number;
   feedback: SessionFeedbackItem[];
+  coaching: {
+    summary: string;
+    strengths: string[];
+    improvements: string[];
+  } | null;
   evaluationMode: 'AI' | 'HEURISTIC_FALLBACK';
 };
 
@@ -237,6 +247,8 @@ Rules:
 - Judge only what is visible in the transcript. Do not judge pronunciation or audio quality.
 - Return JSON only. No markdown. No code fences.
 - Always include exactly one feedback object for every USER message id that appears in the transcript.
+- Include a short session-level coaching object that is specific to this transcript, not generic.
+- Coaching must mention concrete behavior from the session when possible, such as short replies, repeated phrases, a useful question, or a specific pattern of mistakes.
 - If a USER message is mostly not English or uses another language/script, it must be marked as an error.
 - Non-English replies must lower naturalness strongly and should not be treated as a good answer.
 - If a user message is acceptable, set:
@@ -272,6 +284,11 @@ Required JSON shape:
     "grammar": 0,
     "vocabulary": 0,
     "naturalness": 0
+  },
+  "coaching": {
+    "summary": "Một nhận xét ngắn, cụ thể về phiên này bằng ${feedbackLanguage}",
+    "strengths": ["Một điểm mạnh cụ thể dựa trên transcript"],
+    "improvements": ["Một việc nên cải thiện cụ thể cho phiên sau"]
   },
   "feedback": [
     {
@@ -699,6 +716,13 @@ function parseAiEvaluation(rawText: string, messages: SessionMessageRecord[], lo
   const userMessages = getUserMessages(messages);
   const parsed = aiEvaluationSchema.parse(JSON.parse(extractJsonObject(rawText)));
   const feedbackMap = new Map(parsed.feedback.map((item) => [item.messageId, item]));
+  const coaching = parsed.coaching
+    ? {
+        summary: normalizeWhitespace(parsed.coaching.summary).slice(0, 420),
+        strengths: parsed.coaching.strengths.map((item) => normalizeWhitespace(item).slice(0, 220)).filter(Boolean).slice(0, 3),
+        improvements: parsed.coaching.improvements.map((item) => normalizeWhitespace(item).slice(0, 220)).filter(Boolean).slice(0, 3),
+      }
+    : null;
 
   return {
     scores: {
@@ -712,11 +736,12 @@ function parseAiEvaluation(rawText: string, messages: SessionMessageRecord[], lo
         ? sanitizeFeedbackItem(rawItem, message)
         : buildHeuristicFeedback(message, locale);
     }),
+    coaching,
   };
 }
 
 function enforceStrictLanguageRules(
-  result: Pick<SessionEvaluationResult, 'scores' | 'feedback'>,
+  result: Pick<SessionEvaluationResult, 'scores' | 'feedback' | 'coaching'>,
   messages: SessionMessageRecord[],
   locale: FeedbackLocale,
 ) {
@@ -747,6 +772,7 @@ function enforceStrictLanguageRules(
       naturalness: Math.min(result.scores.naturalness, scoreCaps.naturalness),
     },
     feedback,
+    coaching: result.coaching,
   };
 }
 
@@ -784,6 +810,7 @@ export async function evaluateCompletedSession(input: SessionEvaluationInput): P
         userTurnCount: userMessages.length,
       }),
       feedback: parsed.feedback,
+      coaching: parsed.coaching,
       evaluationMode: 'AI',
     };
   } catch {
@@ -795,6 +822,7 @@ export async function evaluateCompletedSession(input: SessionEvaluationInput): P
         userTurnCount: userMessages.length,
       }),
       feedback: heuristicFeedback,
+      coaching: null,
       evaluationMode: 'HEURISTIC_FALLBACK',
     };
   }

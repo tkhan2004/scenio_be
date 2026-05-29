@@ -60,11 +60,16 @@ const MESSAGE_SOURCE_MAP: Record<MessageSource, { role: MessageRole; modality: M
 
 type SessionCompletionResponse = {
   message?: ReturnType<typeof mapSessionMessage>;
+  messages: ReturnType<typeof mapSessionMessage>[];
   session: {
     id: string;
     status: 'COMPLETED';
     endedAt: Date | null;
+    xpEarned: number;
+    targetTurns: number;
+    sourceSummary: ReturnType<typeof getSessionConversationSource>;
   };
+  scores: sessionsEvaluatorService.SessionEvaluationResult['scores'];
   evaluation: {
     mode: sessionsEvaluatorService.SessionEvaluationResult['evaluationMode'];
     scores: sessionsEvaluatorService.SessionEvaluationResult['scores'];
@@ -694,6 +699,7 @@ async function completeSessionWithEvaluation(
       vocabulary: evaluation.scores.vocabulary,
       naturalness: evaluation.scores.naturalness,
     },
+    aiCoaching: evaluation.coaching,
     locale: feedbackLocale,
   });
   const today = getTodayDateString();
@@ -757,11 +763,21 @@ async function completeSessionWithEvaluation(
 
   return {
     ...(completion.message ? { message: mapSessionMessage(completion.message) } : {}),
+    messages: finalMessages.map(mapSessionMessage),
     session: {
       id: session.id,
       status: 'COMPLETED',
       endedAt: completion.session.endedAt,
+      xpEarned: evaluation.xpEarned,
+      targetTurns: session.sourceType === 'CUSTOM_PRACTICE'
+        ? getTargetTurnsForCustomConfig(
+            session.customPracticeConfig?.conversationLength,
+            session.customPracticeConfig?.estimatedMinutes,
+          )
+        : 3,
+      sourceSummary: getSessionConversationSource(session),
     },
+    scores: evaluation.scores,
     evaluation: {
       mode: evaluation.evaluationMode,
       scores: evaluation.scores,

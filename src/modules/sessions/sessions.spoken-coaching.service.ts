@@ -34,6 +34,11 @@ type SpokenCoachingInput = {
   session: SpokenCoachingSessionContext;
   messages: SpokenCoachingMessageContext[];
   locale?: CoachingLocale;
+  aiCoaching?: {
+    summary: string;
+    strengths: string[];
+    improvements: string[];
+  } | null;
   scores: {
     grammar: number | null;
     vocabulary: number | null;
@@ -295,11 +300,12 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
     - input.session.hintCount * 4
     - shortResponseCount * 4;
   const confidenceScore = clampScore(confidenceBase, 30, 94);
+  const aiCoaching = input.aiCoaching;
 
   return {
     available: true,
-    mode: 'TRANSCRIPT_BASED',
-    summary: buildSummary({
+    mode: aiCoaching ? 'AI_TRANSCRIPT_BASED' : 'TRANSCRIPT_BASED',
+    summary: aiCoaching?.summary || buildSummary({
       expressionScore,
       clarityScore,
       confidenceScore,
@@ -312,7 +318,7 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
       clarity: clarityScore,
       confidence: confidenceScore,
     },
-    strengths: buildStrengths({
+    strengths: aiCoaching?.strengths?.length ? aiCoaching.strengths.slice(0, 3) : buildStrengths({
       grammar,
       vocabulary,
       naturalness,
@@ -320,7 +326,7 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
       questionCount,
       locale,
     }),
-    improvements: buildImprovements({
+    improvements: aiCoaching?.improvements?.length ? aiCoaching.improvements.slice(0, 3) : buildImprovements({
       grammar,
       vocabulary,
       naturalness,
