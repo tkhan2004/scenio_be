@@ -125,6 +125,27 @@ function getRealtimeVoiceCandidates(
   return uniqueValues([...genderFallbacks, supportedSelectedVoice, supportedDefaultVoice, 'marin']);
 }
 
+function getPreferredTranscriptionModel(
+  sttModels: Array<{ modelId: string }>,
+  defaultModel: string,
+) {
+  return sttModels.find((model) => model.modelId === 'gpt-4o-transcribe')?.modelId
+    ?? sttModels.find((model) => model.modelId === 'gpt-4o-transcribe-latest')?.modelId
+    ?? sttModels[0]?.modelId
+    ?? defaultModel;
+}
+
+function buildRealtimeTranscriptionPrompt(session: SessionContextRecord) {
+  const source = getConversationSource(session);
+
+  return [
+    'Transcribe only the learner speech in English.',
+    'The speaker is an English learner. Preserve grammar mistakes, hesitations, repeated words, and unnatural word choice exactly.',
+    'Do not correct, translate, summarize, or make the learner sound more fluent.',
+    `Conversation context: ${source.title}. Mission: ${source.missionText}. AI partner: ${source.characterName}.`,
+  ].join(' ');
+}
+
 /**
  * Function Objective - createRealtimeTokenForSession
  * Summary: Gọi OpenAI Realtime API để mint client secret cho session ACTIVE hiện tại.
@@ -146,7 +167,8 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
     session.voiceProfile?.gender ?? null,
     defaults.voice,
   );
-  const transcriptionModel = sttModels[0]?.modelId ?? defaults.transcriptionModel;
+  const transcriptionModel = getPreferredTranscriptionModel(sttModels, defaults.transcriptionModel);
+  const transcriptionPrompt = buildRealtimeTranscriptionPrompt(session);
 
   let realtime: Awaited<ReturnType<typeof createRealtimeClientSecret>> | null = null;
   const errors: string[] = [];
@@ -159,6 +181,7 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
           voice,
           model: realtimeModel,
           transcriptionModel,
+          transcriptionPrompt,
         });
         break;
       } catch (error: any) {

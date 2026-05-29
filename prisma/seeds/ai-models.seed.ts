@@ -272,9 +272,9 @@ const DEFAULT_SETTINGS = [
   },
   {
     featureType: AiFeatureType.STT,
-    primary: [AiProvider.OPENAI, 'gpt-4o-mini-transcribe'] as const,
+    primary: [AiProvider.OPENAI, 'gpt-4o-transcribe'] as const,
     fallbacks: [
-      [AiProvider.OPENAI, 'gpt-4o-transcribe'] as const,
+      [AiProvider.OPENAI, 'gpt-4o-mini-transcribe'] as const,
       [AiProvider.OPENAI, 'whisper-1'] as const,
     ],
     outputDimension: null,
