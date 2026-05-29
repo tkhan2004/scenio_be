@@ -1,4 +1,5 @@
-import { ConditionType, MissionType, Prisma } from '@prisma/client';
+import Anthropic from '@anthropic-ai/sdk';
+import { AiFeatureType, AiProvider, ConditionType, MissionType, Prisma } from '@prisma/client';
 import prisma from '../../config/database';
 import {
   CreateVocabularyInput,
@@ -9,12 +10,15 @@ import {
   ReviewVocabularyParams,
 } from '../../schemas/vocabulary';
 import * as missionsService from '../missions/missions.service';
+import { getAiFeatureRuntimePlan } from '../ai-models/ai-models.service';
 import * as usersRepo from '../users/users.repository';
 import * as vocabularyRepo from './vocabulary.repository';
 
 type BadgeRecord = Awaited<ReturnType<typeof usersRepo.findActiveBadgesWithEarnedStatus>>[number];
 
 const SRS_INTERVAL_DAYS = [1, 3, 7, 14, 30, 60] as const;
+const MANUAL_VOCABULARY_PLACEHOLDER = 'A word saved from your practice transcript for review.';
+type RuntimeAiModel = Awaited<ReturnType<typeof getAiFeatureRuntimePlan>>['models'][number];
 
 /**
  * Helper - getTodayDateString
@@ -30,6 +34,186 @@ function getTodayDateString() {
  */
 function normalizeWord(word: string) {
   return word.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeDefinition(value: string | null | undefined) {
+  return value?.trim().replace(/\s+/g, ' ') ?? '';
+}
+
+function shouldGenerateVietnameseDefinition(definition: string | null | undefined) {
+  const normalized = normalizeDefinition(definition);
+  return !normalized || normalized.toLowerCase() === MANUAL_VOCABULARY_PLACEHOLDER.toLowerCase();
+}
+
+function getRequiredProviderApiKey(providerName: AiProvider) {
+  const envName = providerName === AiProvider.ANTHROPIC
+    ? 'CLAUDE_API_KEY'
+    : providerName === AiProvider.GOOGLE
+      ? 'GEMINI_API_KEY'
+      : 'OPENAI_API_KEY';
+  const value = process.env[envName]?.trim();
+  const isPlaceholder =
+    !value ||
+    value.includes('replace-with-your-key') ||
+    value.includes('replace_with_your_key') ||
+    value.startsWith('your_') ||
+    value.startsWith('sk-replace');
+
+  if (isPlaceholder) {
+    throw new Error(`Thiếu ${envName} hợp lệ`);
+  }
+
+  return value;
+}
+
+function extractJsonObject(rawText: string) {
+  const trimmed = rawText.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed;
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch) return fencedMatch[1].trim();
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
+  return trimmed;
+}
+
+function parseVocabularyDefinition(rawText: string) {
+  try {
+    const parsed = JSON.parse(extractJsonObject(rawText)) as { definition?: string };
+    const definition = normalizeDefinition(parsed.definition);
+    if (definition) return definition.slice(0, 240);
+  } catch (_) {
+    // Fallback to raw text below.
+  }
+
+  return normalizeDefinition(rawText).slice(0, 240);
+}
+
+async function callOpenAiVocabularyModel(modelId: string, prompt: string) {
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getRequiredProviderApiKey(AiProvider.OPENAI)}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: modelId,
+      temperature: 0.2,
+      max_output_tokens: 160,
+      input: [
+        {
+          role: 'system',
+          content: 'You write concise Vietnamese meanings for English vocabulary in a language learning app. Return JSON only.',
+        },
+        { role: 'user', content: prompt },
+      ],
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? `OpenAI returned ${response.status}`);
+  }
+
+  const text = payload?.output_text
+    ?? payload?.output?.flatMap((item: any) => item?.content ?? [])
+      ?.map((part: any) => part?.text ?? '')
+      ?.join('')
+    ?? '';
+  if (!text.trim()) throw new Error('OpenAI không trả vocabulary definition');
+  return text.trim();
+}
+
+async function callClaudeVocabularyModel(modelId: string, prompt: string) {
+  const anthropic = new Anthropic({ apiKey: getRequiredProviderApiKey(AiProvider.ANTHROPIC) });
+  const response = await anthropic.messages.create({
+    model: modelId,
+    max_tokens: 160,
+    temperature: 0.2,
+    system: 'You write concise Vietnamese meanings for English vocabulary in a language learning app. Return JSON only.',
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const text = response.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+    .trim();
+  if (!text) throw new Error('Claude không trả vocabulary definition');
+  return text;
+}
+
+async function callGeminiVocabularyModel(modelId: string, prompt: string) {
+  const apiKey = getRequiredProviderApiKey(AiProvider.GOOGLE);
+  const baseUrl = (process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/models/${modelId}:generateContent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
+    body: JSON.stringify({
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 160,
+        responseMimeType: 'application/json',
+      },
+      systemInstruction: {
+        parts: [{ text: 'You write concise Vietnamese meanings for English vocabulary in a language learning app. Return JSON only.' }],
+      },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? `Gemini returned ${response.status}`);
+  }
+
+  const text = payload?.candidates?.[0]?.content?.parts
+    ?.map((part: any) => part?.text ?? '')
+    ?.join('')
+    ?.trim() ?? '';
+  if (!text) throw new Error('Gemini không trả vocabulary definition');
+  return text;
+}
+
+async function callVocabularyDefinitionModel(model: RuntimeAiModel, prompt: string) {
+  if (model.provider === AiProvider.ANTHROPIC) {
+    return callClaudeVocabularyModel(model.modelId, prompt);
+  }
+  if (model.provider === AiProvider.GOOGLE) {
+    return callGeminiVocabularyModel(model.modelId, prompt);
+  }
+  return callOpenAiVocabularyModel(model.modelId, prompt);
+}
+
+async function generateVietnameseDefinition(input: {
+  word: string;
+  sampleSentence?: string | null;
+}) {
+  const prompt = `Create a short Vietnamese meaning for this English vocabulary item.
+
+Word or phrase: ${input.word}
+Context sentence: ${input.sampleSentence?.trim() || 'not provided'}
+
+Rules:
+- Return JSON only: {"definition":"..."}
+- Definition must be Vietnamese.
+- Keep it concise, natural, and useful for a Vietnamese learner.
+- If the word is a phrase, explain the phrase meaning in this context.`;
+
+  const plan = await getAiFeatureRuntimePlan(AiFeatureType.ROLEPLAY_LLM);
+  const models = plan.models.length > 0 ? plan.models : [];
+  for (const model of models) {
+    try {
+      const rawText = await callVocabularyDefinitionModel(model, prompt);
+      const definition = parseVocabularyDefinition(rawText);
+      if (definition) return definition;
+    } catch (_) {
+      // Try the next configured fallback model.
+    }
+  }
+
+  return `Nghĩa tiếng Việt của "${input.word}" trong ngữ cảnh này.`;
 }
 
 /**
@@ -423,7 +607,13 @@ export async function createVocabulary(userId: string, input: CreateVocabularyIn
   }
 
   const word = sceneVocabulary?.word ?? input.word!;
-  const definition = sceneVocabulary?.definition ?? input.definition!;
+  const definition = sceneVocabulary?.definition
+    ?? (shouldGenerateVietnameseDefinition(input.definition)
+      ? await generateVietnameseDefinition({
+          word,
+          sampleSentence: input.sampleSentence ?? null,
+        })
+      : normalizeDefinition(input.definition));
   const normalizedWord = normalizeWord(word);
 
   await missionsService.ensureTodayMissions(userId, today);
@@ -447,6 +637,12 @@ export async function createVocabulary(userId: string, input: CreateVocabularyIn
           encounterCount: 1,
           lastSeenAt: new Date(),
         },
+        tx,
+      );
+    } else if (shouldGenerateVietnameseDefinition(vocabulary.definition)) {
+      vocabulary = await vocabularyRepo.updateUserVocabularyById(
+        vocabulary.id,
+        { definition },
         tx,
       );
     }
