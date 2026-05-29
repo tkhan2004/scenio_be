@@ -25,6 +25,7 @@ type SpokenCoachingMessageContext = Pick<
   | 'isHint'
   | 'hasError'
   | 'errorType'
+  | 'originalPhrase'
   | 'suggestion'
   | 'explanation'
   | 'isGood'
@@ -79,15 +80,68 @@ function getBaseScore(value: number | null, fallback: number) {
   return typeof value === 'number' ? value : fallback;
 }
 
+function truncateText(value: string, maxLength = 96) {
+  const normalized = normalizeWhitespace(value);
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1).trim()}…`;
+}
+
+function focusLabel(errorType: ErrorType | null | undefined, locale: CoachingLocale) {
+  const en = locale === 'en';
+  switch (errorType) {
+    case ErrorType.GRAMMAR:
+      return en ? 'sentence structure' : 'cấu trúc câu';
+    case ErrorType.VOCABULARY:
+      return en ? 'word choice' : 'lựa chọn từ';
+    case ErrorType.NATURALNESS:
+    default:
+      return en ? 'natural phrasing' : 'cách diễn đạt tự nhiên';
+  }
+}
+
+function firstIssueMessage(messages: SpokenCoachingMessageContext[]) {
+  return messages
+    .filter((message) => message.hasError)
+    .sort((a, b) => a.turnIndex - b.turnIndex)[0] ?? null;
+}
+
+function firstGoodMessage(messages: SpokenCoachingMessageContext[]) {
+  return messages
+    .filter((message) => message.isGood && !message.hasError)
+    .sort((a, b) => a.turnIndex - b.turnIndex)[0] ?? null;
+}
+
 function buildSummary(args: {
   expressionScore: number;
   clarityScore: number;
   confidenceScore: number;
   shortResponseRatio: number;
   hintCount: number;
+  userMessages: SpokenCoachingMessageContext[];
   locale: CoachingLocale;
 }) {
   const en = args.locale === 'en';
+  const issueMessage = firstIssueMessage(args.userMessages);
+  if (issueMessage) {
+    const phrase = issueMessage.originalPhrase || issueMessage.content;
+    const reason = issueMessage.explanation
+      ? truncateText(issueMessage.explanation, 110)
+      : en
+        ? `the ${focusLabel(issueMessage.errorType, args.locale)} needs work`
+        : `cần cải thiện ${focusLabel(issueMessage.errorType, args.locale)}`;
+
+    return en
+      ? `Turn ${issueMessage.turnIndex} shows the main issue: "${truncateText(phrase, 72)}". ${reason}. Prioritize ${focusLabel(issueMessage.errorType, args.locale)} in the next attempt.`
+      : `Lượt ${issueMessage.turnIndex} là điểm cần chú ý nhất: "${truncateText(phrase, 72)}". ${reason}. Phiên sau nên ưu tiên ${focusLabel(issueMessage.errorType, args.locale)}.`;
+  }
+
+  const goodMessage = firstGoodMessage(args.userMessages);
+  if (goodMessage) {
+    return en
+      ? `Your strongest turn was turn ${goodMessage.turnIndex}: "${truncateText(goodMessage.content, 86)}". Keep that clarity, then add one more detail in each answer.`
+      : `Lượt tốt nhất là lượt ${goodMessage.turnIndex}: "${truncateText(goodMessage.content, 86)}". Hãy giữ độ rõ này và thêm một chi tiết nữa ở mỗi câu trả lời.`;
+  }
+
   if (args.expressionScore >= 78 && args.clarityScore >= 78 && args.confidenceScore >= 72) {
     return en
       ? 'You expressed your ideas clearly, naturally, and confidently enough for this scene.'
@@ -123,10 +177,18 @@ function buildStrengths(args: {
   naturalness: number;
   averageWordsPerTurn: number;
   questionCount: number;
+  userMessages: SpokenCoachingMessageContext[];
   locale: CoachingLocale;
 }) {
   const strengths: string[] = [];
   const en = args.locale === 'en';
+  const goodMessage = firstGoodMessage(args.userMessages);
+
+  if (goodMessage) {
+    strengths.push(en
+      ? `Turn ${goodMessage.turnIndex} was clear enough to keep: "${truncateText(goodMessage.content, 86)}".`
+      : `Lượt ${goodMessage.turnIndex} diễn đạt đủ rõ, nên giữ cách triển khai này: "${truncateText(goodMessage.content, 86)}".`);
+  }
 
   if (args.grammar >= 75) {
     strengths.push(en
@@ -176,10 +238,25 @@ function buildImprovements(args: {
   grammarErrorCount: number;
   vocabularyErrorCount: number;
   naturalnessErrorCount: number;
+  userMessages: SpokenCoachingMessageContext[];
   locale: CoachingLocale;
 }) {
   const improvements: string[] = [];
   const en = args.locale === 'en';
+  const issueMessages = args.userMessages
+    .filter((message) => message.hasError)
+    .sort((a, b) => a.turnIndex - b.turnIndex);
+  const issueWithSuggestion = issueMessages.find((message) => (
+    Boolean(message.suggestion?.trim()) || Boolean(message.explanation?.trim())
+  ));
+
+  if (issueWithSuggestion) {
+    const original = issueWithSuggestion.originalPhrase || issueWithSuggestion.content;
+    const suggestion = issueWithSuggestion.suggestion?.trim();
+    improvements.push(en
+      ? `Turn ${issueWithSuggestion.turnIndex}: revise "${truncateText(original, 58)}"${suggestion ? ` to "${truncateText(suggestion, 72)}"` : ''}.`
+      : `Lượt ${issueWithSuggestion.turnIndex}: sửa "${truncateText(original, 58)}"${suggestion ? ` thành "${truncateText(suggestion, 72)}"` : ''}.`);
+  }
 
   if (args.grammar < 72 || args.grammarErrorCount >= 2) {
     improvements.push(en
@@ -311,6 +388,7 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
       confidenceScore,
       shortResponseRatio,
       hintCount: input.session.hintCount,
+      userMessages,
       locale,
     }),
     scores: {
@@ -324,6 +402,7 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
       naturalness,
       averageWordsPerTurn,
       questionCount,
+      userMessages,
       locale,
     }),
     improvements: aiCoaching?.improvements?.length ? aiCoaching.improvements.slice(0, 3) : buildImprovements({
@@ -335,6 +414,7 @@ export function buildSpokenCoachingSummary(input: SpokenCoachingInput) {
       grammarErrorCount,
       vocabularyErrorCount,
       naturalnessErrorCount,
+      userMessages,
       locale,
     }),
     turnHighlights: buildTurnHighlights(userMessages, locale),
