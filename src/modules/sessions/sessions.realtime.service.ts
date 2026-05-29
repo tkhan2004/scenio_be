@@ -45,12 +45,16 @@ function buildRealtimeInstructions(session: SessionContextRecord) {
   const learningGoal = session.user.learningGoal || 'GENERAL_ENGLISH';
   const voiceLabel = session.voiceProfile?.displayName || session.voiceSnapshotName || 'Scenio Voice';
   const styleTags = session.voiceProfile?.styleTags?.join(', ') || 'clear, friendly';
+  const characterRole = session.sourceType === 'CUSTOM_PRACTICE'
+    ? 'the assigned conversation partner'
+    : source.characterRole;
 
-  return `You are roleplaying as ${source.characterName}, the ${source.characterRole}, in the conversation "${source.title}".
+  return `You are roleplaying as ${source.characterName}, the ${characterRole}, in the conversation "${source.title}".
 
 Scenio session rules:
 - Stay in character at all times.
 - Speak only in English.
+- If any scene/persona/context field is written in Vietnamese or another language, silently interpret it and speak in natural English only.
 - Keep replies concise and natural for a ${level} learner.
 - Use short turns that are easy to follow in voice conversation.
 - Treat this like a live call, not a scripted lesson.

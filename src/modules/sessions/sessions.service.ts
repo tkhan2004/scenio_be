@@ -297,6 +297,7 @@ function getCustomPracticeMissionText(input: StartCustomSessionInput) {
  * Summary: Sinh opening message deterministic cho custom practice mà chưa cần LLM orchestration.
  */
 function getCustomPracticeOpeningMessage(input: StartCustomSessionInput) {
+  const displayName = input.aiPersona.aiDisplayName.trim() || 'your conversation partner';
   const channelLine = input.context.conversationChannel === 'PHONE_CALL'
     ? 'Thanks for taking my call.'
     : input.context.conversationChannel === 'VIDEO_CALL'
@@ -311,7 +312,7 @@ function getCustomPracticeOpeningMessage(input: StartCustomSessionInput) {
         ? 'What would you like to discuss first?'
         : 'How would you like to begin?';
 
-  return `Hi, I'm ${input.aiPersona.aiDisplayName}, the ${input.aiPersona.aiRole}. ${channelLine} ${firstQuestion}`;
+  return `Hi, I'm ${displayName}. ${channelLine} ${firstQuestion}`;
 }
 
 /**
@@ -333,7 +334,7 @@ function getCustomPracticeSystemPrompt(input: StartCustomSessionInput) {
     ? input.learningConfig.avoidTopics.join(', ')
     : 'none';
 
-  return `You are roleplaying as ${input.aiPersona.aiDisplayName}, a ${input.aiPersona.aiRole}.
+  return `You are roleplaying as ${input.aiPersona.aiDisplayName}, a conversation partner whose role/context may be described by the setup below.
 
 Conversation setup:
 - Practice goal: ${input.practiceGoal}
@@ -375,6 +376,7 @@ Coaching rules:
 Scenio session rules:
 - Stay in character at all times.
 - Speak only in English unless the system explicitly asks otherwise.
+- If any setup field is written in Vietnamese or another language, silently interpret it and speak in natural English only.
 - Keep responses concise, natural, and appropriate for the learner level.
 - Move the conversation toward the learner's goal naturally.
 - Be believable as a real conversation partner, not a generic tutor.
