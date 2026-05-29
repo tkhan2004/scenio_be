@@ -87,18 +87,38 @@ function uniqueValues(values: Array<string | null | undefined>) {
     .filter((value, index, array) => array.indexOf(value) === index);
 }
 
+const SUPPORTED_REALTIME_VOICES = new Set([
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'sage',
+  'shimmer',
+  'verse',
+  'marin',
+  'cedar',
+]);
+
+function normalizeRealtimeVoice(voice: string | null | undefined) {
+  const normalized = voice?.trim().toLowerCase();
+  return normalized && SUPPORTED_REALTIME_VOICES.has(normalized) ? normalized : null;
+}
+
 function getRealtimeVoiceCandidates(
   selectedVoice: string,
   gender: string | null | undefined,
   defaultVoice: string,
 ) {
+  const supportedSelectedVoice = normalizeRealtimeVoice(selectedVoice);
+  const supportedDefaultVoice = normalizeRealtimeVoice(defaultVoice);
   const genderFallbacks = gender === 'MALE'
-    ? ['cedar', 'alloy']
+    ? ['echo', 'ash', 'alloy', 'cedar']
     : gender === 'FEMALE'
-      ? ['marin', 'verse', 'shimmer']
-      : ['marin', 'cedar', 'alloy'];
+      ? [supportedSelectedVoice, 'marin', 'verse', 'shimmer']
+      : [supportedSelectedVoice, 'marin', 'echo', 'alloy'];
 
-  return uniqueValues([selectedVoice, ...genderFallbacks, defaultVoice]);
+  return uniqueValues([...genderFallbacks, supportedSelectedVoice, supportedDefaultVoice, 'marin']);
 }
 
 /**
