@@ -3,7 +3,9 @@ import 'dotenv/config';
 const DEFAULT_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
 const DEFAULT_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'marin';
 const DEFAULT_REALTIME_TEMPERATURE = Number(process.env.OPENAI_REALTIME_TEMPERATURE || '0.6');
-const DEFAULT_TRANSCRIBE_MODEL = process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe';
+const DEFAULT_TRANSCRIBE_MODEL = process.env.OPENAI_REALTIME_TRANSCRIBE_MODEL || 'gpt-4o-transcribe';
+const DEFAULT_TRANSCRIBE_PROMPT = process.env.OPENAI_REALTIME_TRANSCRIBE_PROMPT
+  || 'Transcribe English learner speech exactly. Preserve grammar mistakes, hesitations, and word choice. Do not correct or rewrite the learner.';
 const DEFAULT_API_URL = process.env.OPENAI_REALTIME_API_URL || 'https://api.openai.com/v1/realtime/client_secrets';
 
 function getRequiredOpenAIApiKey() {
@@ -38,10 +40,12 @@ export async function createRealtimeClientSecret(input: {
   voice: string;
   model?: string;
   transcriptionModel?: string;
+  transcriptionPrompt?: string;
 }) {
   const apiKey = getRequiredOpenAIApiKey();
   const model = input.model?.trim() || DEFAULT_REALTIME_MODEL;
   const transcriptionModel = input.transcriptionModel?.trim() || DEFAULT_TRANSCRIBE_MODEL;
+  const transcriptionPrompt = input.transcriptionPrompt?.trim() || DEFAULT_TRANSCRIBE_PROMPT;
 
   const response = await fetch(DEFAULT_API_URL, {
     method: 'POST',
@@ -65,9 +69,13 @@ export async function createRealtimeClientSecret(input: {
               type: 'audio/pcm',
               rate: 24000,
             },
+            noise_reduction: {
+              type: 'near_field',
+            },
             transcription: {
               model: transcriptionModel,
               language: 'en',
+              prompt: transcriptionPrompt,
             },
             turn_detection: {
               type: 'server_vad',

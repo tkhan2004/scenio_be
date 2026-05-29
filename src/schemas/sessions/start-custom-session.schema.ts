@@ -62,6 +62,7 @@ export const startCustomSessionSchema = z.object({
     learningConfig: z.object({
       difficulty: z.nativeEnum(Level).optional(),
       conversationLength: conversationLengthEnum.optional(),
+      targetMinutes: z.coerce.number().int().min(5).max(30).optional(),
       correctionStyle: correctionStyleEnum.optional(),
       hintFrequency: hintFrequencyEnum.optional(),
       responseComplexity: responseComplexityEnum.optional(),

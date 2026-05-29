@@ -636,6 +636,7 @@ enum ConditionType {
   VOCAB_SAVED // tổng từ đã lưu >= conditionValue
   FIRST_SESSION // hoàn thành session đầu tiên (conditionValue = 1)
   PERFECT_SCORE // đạt 100 điểm (conditionValue = 100)
+  ROADMAP_COMPLETED // hoàn thành một roadmap cụ thể
 }
 
 enum NotificationType {

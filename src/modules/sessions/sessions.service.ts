@@ -60,11 +60,16 @@ const MESSAGE_SOURCE_MAP: Record<MessageSource, { role: MessageRole; modality: M
 
 type SessionCompletionResponse = {
   message?: ReturnType<typeof mapSessionMessage>;
+  messages: ReturnType<typeof mapSessionMessage>[];
   session: {
     id: string;
     status: 'COMPLETED';
     endedAt: Date | null;
+    xpEarned: number;
+    targetTurns: number;
+    sourceSummary: ReturnType<typeof getSessionConversationSource>;
   };
+  scores: sessionsEvaluatorService.SessionEvaluationResult['scores'];
   evaluation: {
     mode: sessionsEvaluatorService.SessionEvaluationResult['evaluationMode'];
     scores: sessionsEvaluatorService.SessionEvaluationResult['scores'];
@@ -230,6 +235,38 @@ function getEstimatedMinutesFromLength(conversationLength?: string | null) {
   }
 }
 
+function getConversationLengthFromMinutes(minutes?: number | null) {
+  if (!minutes) return 'MEDIUM';
+  if (minutes <= 9) return 'SHORT';
+  if (minutes >= 16) return 'LONG';
+  return 'MEDIUM';
+}
+
+function getTargetTurnsFromLength(conversationLength?: string | null) {
+  switch (conversationLength) {
+    case 'SHORT':
+      return 3;
+    case 'LONG':
+      return 7;
+    case 'MEDIUM':
+    default:
+      return 5;
+  }
+}
+
+function getTargetTurnsFromMinutes(minutes?: number | null) {
+  if (!minutes) return getTargetTurnsFromLength('MEDIUM');
+  return Math.max(3, Math.min(12, Math.round(minutes / 2.5)));
+}
+
+function getTargetTurnsForCustomConfig(conversationLength?: string | null, estimatedMinutes?: number | null) {
+  if (estimatedMinutes) {
+    return getTargetTurnsFromMinutes(estimatedMinutes);
+  }
+
+  return getTargetTurnsFromLength(conversationLength);
+}
+
 /**
  * Helper - getCustomPracticeDisplayTitle
  * Summary: Tạo title hiển thị gọn cho custom practice session.
@@ -265,6 +302,7 @@ function getCustomPracticeMissionText(input: StartCustomSessionInput) {
  * Summary: Sinh opening message deterministic cho custom practice mà chưa cần LLM orchestration.
  */
 function getCustomPracticeOpeningMessage(input: StartCustomSessionInput) {
+  const displayName = input.aiPersona.aiDisplayName.trim() || 'your conversation partner';
   const channelLine = input.context.conversationChannel === 'PHONE_CALL'
     ? 'Thanks for taking my call.'
     : input.context.conversationChannel === 'VIDEO_CALL'
@@ -279,7 +317,7 @@ function getCustomPracticeOpeningMessage(input: StartCustomSessionInput) {
         ? 'What would you like to discuss first?'
         : 'How would you like to begin?';
 
-  return `Hi, I'm ${input.aiPersona.aiDisplayName}, the ${input.aiPersona.aiRole}. ${channelLine} ${firstQuestion}`;
+  return `Hi, I'm ${displayName}. ${channelLine} ${firstQuestion}`;
 }
 
 /**
@@ -301,7 +339,7 @@ function getCustomPracticeSystemPrompt(input: StartCustomSessionInput) {
     ? input.learningConfig.avoidTopics.join(', ')
     : 'none';
 
-  return `You are roleplaying as ${input.aiPersona.aiDisplayName}, a ${input.aiPersona.aiRole}.
+  return `You are roleplaying as ${input.aiPersona.aiDisplayName}, a conversation partner whose role/context may be described by the setup below.
 
 Conversation setup:
 - Practice goal: ${input.practiceGoal}
@@ -330,7 +368,8 @@ Your persona:
 
 Coaching rules:
 - Difficulty target: ${difficulty}
-- Conversation length: ${input.learningConfig.conversationLength || 'MEDIUM'}
+- Conversation length: ${input.learningConfig.conversationLength || getConversationLengthFromMinutes(input.learningConfig.targetMinutes)}
+- Target duration: ${input.learningConfig.targetMinutes || getEstimatedMinutesFromLength(input.learningConfig.conversationLength)} minutes
 - Correction style: ${input.learningConfig.correctionStyle || 'END_ONLY'}
 - Hint frequency: ${input.learningConfig.hintFrequency || 'LOW'}
 - Response complexity: ${input.learningConfig.responseComplexity || 'BALANCED'}
@@ -342,6 +381,7 @@ Coaching rules:
 Scenio session rules:
 - Stay in character at all times.
 - Speak only in English unless the system explicitly asks otherwise.
+- If any setup field is written in Vietnamese or another language, silently interpret it and speak in natural English only.
 - Keep responses concise, natural, and appropriate for the learner level.
 - Move the conversation toward the learner's goal naturally.
 - Be believable as a real conversation partner, not a generic tutor.
@@ -359,6 +399,12 @@ function getActiveSessionConflictDetails(
   const characterName = activeSession.sourceType === 'CUSTOM_PRACTICE'
     ? activeSession.customPracticeConfig?.aiDisplayName ?? 'AI'
     : activeSession.scene?.characterName ?? 'AI';
+  const targetTurns = activeSession.sourceType === 'CUSTOM_PRACTICE'
+    ? getTargetTurnsForCustomConfig(
+        activeSession.customPracticeConfig?.conversationLength,
+        activeSession.customPracticeConfig?.estimatedMinutes,
+      )
+    : 3;
 
   return [
     { field: 'activeSession.id', message: activeSession.id },
@@ -368,6 +414,7 @@ function getActiveSessionConflictDetails(
     { field: 'activeSession.sceneTitle', message: title },
     { field: 'activeSession.characterName', message: characterName },
     { field: 'activeSession.startedAt', message: activeSession.startedAt.toISOString() },
+    { field: 'activeSession.targetTurns', message: String(targetTurns) },
   ];
 }
 
@@ -417,6 +464,8 @@ function getSessionResultSource(
       category: session.customPracticeConfig.contextType,
       difficulty: session.customPracticeConfig.difficulty,
       description: session.customPracticeConfig.topicSummary,
+      missionText: session.customPracticeConfig.missionText,
+      estimatedMinutes: session.customPracticeConfig.estimatedMinutes,
       characterName: session.customPracticeConfig.aiDisplayName,
       characterRole: session.customPracticeConfig.aiRole,
     };
@@ -434,6 +483,8 @@ function getSessionResultSource(
     category: session.scene.category,
     difficulty: session.scene.difficulty,
     description: session.scene.description,
+    missionText: session.scene.missionText,
+    estimatedMinutes: session.scene.estimatedMinutes,
     characterName: session.scene.characterName,
     characterRole: session.scene.characterRole,
   };
@@ -474,6 +525,28 @@ function getTodayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function extractIssueSubtypes(feedbackDetails: unknown) {
+  if (!feedbackDetails || typeof feedbackDetails !== 'object' || !('issues' in feedbackDetails)) {
+    return [] as string[];
+  }
+
+  const issues = (feedbackDetails as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) {
+    return [] as string[];
+  }
+
+  return issues
+    .map((issue) => {
+      if (!issue || typeof issue !== 'object' || !('subtype' in issue)) {
+        return null;
+      }
+
+      const subtype = (issue as { subtype?: unknown }).subtype;
+      return typeof subtype === 'string' ? subtype : null;
+    })
+    .filter((subtype): subtype is string => Boolean(subtype));
+}
+
 function buildNextLearningAction(input: {
   scores: {
     grammar: number | null;
@@ -483,6 +556,7 @@ function buildNextLearningAction(input: {
   feedbackItems: Array<{
     hasError: boolean | null;
     errorType: ErrorType | null;
+    subtypes?: string[];
   }>;
   sourceTitle?: string | null;
 }) {
@@ -509,6 +583,20 @@ function buildNextLearningAction(input: {
       [ErrorType.NATURALNESS]: 0,
     },
   );
+  const nonEnglishCount = input.feedbackItems.filter((item) => (
+    item.hasError && item.subtypes?.includes('NON_ENGLISH_RESPONSE')
+  )).length;
+
+  if (nonEnglishCount > 0) {
+    return {
+      type: 'ENGLISH_ONLY_RETRY',
+      focus: 'NATURALNESS',
+      title: 'Retry this scene fully in English',
+      reason: `Detected ${nonEnglishCount} reply/replies that were not in English.`,
+      ctaLabel: 'Retry in English',
+      suggestedSceneQuery: input.sourceTitle ? `${input.sourceTitle} beginner english speaking` : 'beginner english speaking practice',
+    };
+  }
 
   if (weakest.key === 'grammar') {
     return {
@@ -611,6 +699,7 @@ async function completeSessionWithEvaluation(
       vocabulary: evaluation.scores.vocabulary,
       naturalness: evaluation.scores.naturalness,
     },
+    aiCoaching: evaluation.coaching,
     locale: feedbackLocale,
   });
   const today = getTodayDateString();
@@ -668,16 +757,27 @@ async function completeSessionWithEvaluation(
     feedbackItems: evaluation.feedback.map((item) => ({
       hasError: item.hasError,
       errorType: item.errorType,
+      subtypes: item.feedbackDetails.issues.map((issue) => issue.subtype).filter((subtype): subtype is string => Boolean(subtype)),
     })),
   });
 
   return {
     ...(completion.message ? { message: mapSessionMessage(completion.message) } : {}),
+    messages: finalMessages.map(mapSessionMessage),
     session: {
       id: session.id,
       status: 'COMPLETED',
       endedAt: completion.session.endedAt,
+      xpEarned: evaluation.xpEarned,
+      targetTurns: session.sourceType === 'CUSTOM_PRACTICE'
+        ? getTargetTurnsForCustomConfig(
+            session.customPracticeConfig?.conversationLength,
+            session.customPracticeConfig?.estimatedMinutes,
+          )
+        : 3,
+      sourceSummary: getSessionConversationSource(session),
     },
+    scores: evaluation.scores,
     evaluation: {
       mode: evaluation.evaluationMode,
       scores: evaluation.scores,
@@ -685,7 +785,11 @@ async function completeSessionWithEvaluation(
     spokenCoaching,
     nextLearningAction: buildNextLearningAction({
       scores: evaluation.scores,
-      feedbackItems: evaluation.feedback,
+      feedbackItems: evaluation.feedback.map((item) => ({
+        hasError: item.hasError,
+        errorType: item.errorType,
+        subtypes: item.feedbackDetails.issues.map((issue) => issue.subtype).filter((subtype): subtype is string => Boolean(subtype)),
+      })),
       sourceTitle: getSessionConversationSource(session).title,
     }),
     rewards: {
@@ -976,7 +1080,6 @@ export async function runLevelTest(userId: string, input: LevelTestInput): Promi
   }
 
   await sessionsRepo.completeLevelTest(userId, parsed.level);
-  await learningPlanService.generateLearningPlanBestEffort(userId);
 
   return {
     aiMessage: parsed.aiMessage,
@@ -1053,6 +1156,7 @@ export async function startSession(userId: string, input: StartSessionInput) {
     sourceType: createdSession.sourceType,
     openingMessage,
     modality: createdSession.modality,
+    targetTurns: 3,
     selectedVoice: {
       id: selectedVoice.id,
       displayName: selectedVoice.displayName,
@@ -1098,10 +1202,14 @@ export async function startCustomSession(userId: string, input: StartCustomSessi
 
   const selectedVoice = resolvedVoice.voice;
   const difficulty = input.learningConfig.difficulty || input.userProfile.userEnglishLevel || user.level || Level.A2;
+  const conversationLength = input.learningConfig.conversationLength
+    ?? getConversationLengthFromMinutes(input.learningConfig.targetMinutes);
   const displayTitle = getCustomPracticeDisplayTitle(input);
   const displaySubtitle = getCustomPracticeDisplaySubtitle(input);
   const missionText = getCustomPracticeMissionText(input);
-  const estimatedMinutes = getEstimatedMinutesFromLength(input.learningConfig.conversationLength);
+  const estimatedMinutes = input.learningConfig.targetMinutes
+    ?? getEstimatedMinutesFromLength(conversationLength);
+  const targetTurns = getTargetTurnsFromMinutes(estimatedMinutes);
   const openingMessage = getCustomPracticeOpeningMessage(input);
   const systemPrompt = getCustomPracticeSystemPrompt(input);
 
@@ -1134,7 +1242,7 @@ export async function startCustomSession(userId: string, input: StartCustomSessi
         aiSpeechSpeed: input.aiPersona.aiSpeechSpeed ?? null,
         aiAccentPreference: input.aiPersona.aiAccentPreference?.trim(),
         difficulty,
-        conversationLength: input.learningConfig.conversationLength ?? null,
+        conversationLength,
         correctionStyle: input.learningConfig.correctionStyle ?? null,
         hintFrequency: input.learningConfig.hintFrequency ?? null,
         responseComplexity: input.learningConfig.responseComplexity ?? null,
@@ -1187,12 +1295,15 @@ export async function startCustomSession(userId: string, input: StartCustomSessi
     sourceType: createdSession.session.sourceType,
     openingMessage,
     modality: createdSession.session.modality,
+    targetTurns,
     customPractice: {
       id: createdSession.customConfig.id,
       displayTitle: createdSession.customConfig.displayTitle,
       displaySubtitle: createdSession.customConfig.displaySubtitle,
       contextType: createdSession.customConfig.contextType,
       difficulty: createdSession.customConfig.difficulty,
+      conversationLength,
+      targetMinutes: createdSession.customConfig.estimatedMinutes,
       topicSummary: createdSession.customConfig.topicSummary,
       missionText: createdSession.customConfig.missionText,
       estimatedMinutes: createdSession.customConfig.estimatedMinutes,
@@ -1359,6 +1470,10 @@ export async function completeSession(
     throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
   }
 
+  if (session.status === 'COMPLETED') {
+    return getSessionResult(userId, params, options);
+  }
+
   return completeSessionWithEvaluation(userId, session, undefined, options);
 }
 
@@ -1396,6 +1511,7 @@ export async function createSessionHint(
   const recentMessages = await sessionsRepo.findRecentMessagesForSession(session.id, 8);
   const source = getSessionConversationSource(session);
   const providerMessages = recentMessages
+    .filter((message) => !message.isHint)
     .slice()
     .reverse()
     .map<ProviderMessage>((message) => ({
@@ -1507,6 +1623,12 @@ export async function getSessionResult(
       id: session.id,
       sourceType: session.sourceType,
       status: session.status,
+      targetTurns: session.sourceType === 'CUSTOM_PRACTICE'
+        ? getTargetTurnsForCustomConfig(
+            session.customPracticeConfig?.conversationLength,
+            session.customPracticeConfig?.estimatedMinutes,
+          )
+        : 3,
       modality: session.modality,
       voiceProvider: session.voiceProvider,
       providerSessionId: session.providerSessionId,
@@ -1530,8 +1652,10 @@ export async function getSessionResult(
             id: session.scene.id,
             title: session.scene.title,
             category: session.scene.category,
-            difficulty: session.scene.difficulty,
             description: session.scene.description,
+            missionText: session.scene.missionText,
+            difficulty: session.scene.difficulty,
+            estimatedMinutes: session.scene.estimatedMinutes,
             characterName: session.scene.characterName,
             characterRole: session.scene.characterRole,
           }
@@ -1543,6 +1667,8 @@ export async function getSessionResult(
             displaySubtitle: session.customPracticeConfig.displaySubtitle,
             contextType: session.customPracticeConfig.contextType,
             difficulty: session.customPracticeConfig.difficulty,
+            conversationLength: session.customPracticeConfig.conversationLength,
+            targetMinutes: session.customPracticeConfig.estimatedMinutes,
             topicSummary: session.customPracticeConfig.topicSummary,
             missionText: session.customPracticeConfig.missionText,
             estimatedMinutes: session.customPracticeConfig.estimatedMinutes,
@@ -1559,8 +1685,10 @@ export async function getSessionResult(
       sourceSummary: {
         title: source.title,
         category: source.category,
-        difficulty: source.difficulty,
         description: source.description,
+        missionText: source.missionText,
+        difficulty: source.difficulty,
+        estimatedMinutes: source.estimatedMinutes,
         characterName: source.characterName,
         characterRole: source.characterRole,
       },
@@ -1590,6 +1718,7 @@ export async function getSessionResult(
       feedbackItems: session.messages.map((message) => ({
         hasError: message.hasError,
         errorType: message.errorType,
+        subtypes: extractIssueSubtypes(message.feedbackDetails),
       })),
       sourceTitle: source.title,
     }),

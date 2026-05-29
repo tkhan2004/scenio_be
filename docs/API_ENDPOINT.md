@@ -48,6 +48,7 @@
 | 11d | POST | `/learning-plan/refresh` | ✓ | Archive plan cũ và tạo lộ trình mới | ✅ Done |
 | 11e | PATCH | `/learning-plan/steps/:id/complete` | ✓ | Đánh dấu một bước trong lộ trình đã hoàn thành | ✅ Done |
 | 11f | GET | `/learning-plan/:id/completion-summary` | ✓ | Lấy completion summary của roadmap theo plan id | ✅ Done |
+| 11g | POST | `/learning-plan/:id/start-next` | ✓ | Chốt roadmap completed và tạo roadmap kế tiếp | ✅ Done |
 | **SESSIONS** |
 | 12 | POST | `/sessions/level-test` | ✓ | Bài kiểm tra trình độ AI (5 lượt) | ✅ Done |
 | 13 | POST | `/sessions/start` | ✓ | Bắt đầu phiên học mới | ✅ Done |
@@ -167,9 +168,12 @@ Tải toàn bộ dữ liệu trang chủ trong **1 request duy nhất** để tr
         "id": "uuid",
         "title": "At the Coffee Shop",
         "category": "DAILY",
+        "description": "Order a drink and ask follow-up questions politely.",
+        "missionText": "Complete a simple cafe order and clarify your drink choice.",
         "difficulty": "A2",
         "estimatedMinutes": 6,
-        "characterName": "Mia"
+        "characterName": "Mia",
+        "characterRole": "Barista"
       }
     ]
   }
@@ -200,6 +204,7 @@ Lấy danh sách scene active, hỗ trợ filter và phân trang.
         "title": "At the Coffee Shop",
         "category": "DAILY",
         "description": "Order a drink and ask follow-up questions politely.",
+        "missionText": "Complete a simple cafe order and clarify your drink choice.",
         "difficulty": "A2",
         "estimatedMinutes": 6,
         "characterName": "Mia",
@@ -232,6 +237,7 @@ Tìm scene cho user hiện tại. Backend ưu tiên semantic search bằng pgvec
         "title": "Airport Check-in",
         "category": "TRAVEL",
         "description": "Check in luggage and ask about gate, boarding time, and seat.",
+        "missionText": "Complete the airport check-in conversation naturally.",
         "difficulty": "A2",
         "estimatedMinutes": 7,
         "characterName": "David",
@@ -272,6 +278,7 @@ Gợi ý scene cho bước học tiếp theo dựa trên level, goal, session hi
         "title": "At the Restaurant",
         "category": "DAILY",
         "description": "Order food and drinks, ask for a recommendation, and request the bill politely.",
+        "missionText": "Finish a full restaurant interaction from ordering to paying.",
         "difficulty": "A2",
         "estimatedMinutes": 6,
         "characterName": "Jake",
@@ -287,7 +294,13 @@ Gợi ý scene cho bước học tiếp theo dựa trên level, goal, session hi
 ```
 
 ### 11b. GET `/learning-plan/current`
-Lấy active learning plan hiện tại. Nếu user chưa có plan, backend tự generate một plan rule-based từ onboarding, level, session history và scene recommendation.
+Lấy active learning plan hiện tại. Nếu user chưa có plan và đã hoàn tất onboarding, backend tự generate một plan rule-based từ onboarding, level, session history và scene recommendation.
+
+**Lưu ý lifecycle**
+
+- Sau `level test`, backend chỉ cập nhật `level`.
+- Roadmap chỉ được tự sinh sau khi user đã hoàn tất `PATCH /users/me/onboarding`.
+- Nếu user chưa hoàn tất onboarding hoặc thiếu `learningGoal/studyFrequency/selfAssessment`, endpoint này có thể trả `409`.
 
 **Response 200**
 ```json
@@ -354,6 +367,8 @@ Lấy active learning plan hiện tại. Nếu user chưa có plan, backend tự
           "id": "uuid",
           "title": "Airport Check-in",
           "category": "TRAVEL",
+          "description": "Check in luggage and ask about gate, boarding time, and seat.",
+          "missionText": "Complete the airport check-in conversation naturally.",
           "difficulty": "A2",
           "estimatedMinutes": 7,
           "characterName": "David",
@@ -374,7 +389,7 @@ Lấy active learning plan hiện tại. Nếu user chưa có plan, backend tự
 ```
 
 ### 11c. POST `/learning-plan/generate`
-Archive active plan cũ và tạo một learning plan mới. Dùng khi user vừa hoàn tất onboarding/level test hoặc muốn tạo lại lộ trình từ dữ liệu hiện tại.
+Archive active plan cũ và tạo một learning plan mới. Dùng khi user đã hoàn tất onboarding hoặc muốn tạo lại lộ trình từ dữ liệu hiện tại.
 
 **Response 201:** cùng shape với `GET /learning-plan/current`.
 
@@ -418,6 +433,53 @@ Lấy completion summary của một roadmap theo `planId`. Nếu roadmap chưa 
       "nextRoadmap": {
         "title": "Travel English vocabulary expansion",
         "level": "A2",
+        "focusSkill": "VOCABULARY"
+      }
+    }
+  }
+}
+```
+
+### 11g. POST `/learning-plan/:id/start-next`
+Chốt roadmap hiện tại đã completed và tạo roadmap kế tiếp theo `nextRoadmap.focusSkill`. Endpoint này dùng cho CTA `Start next roadmap` ở mobile.
+
+**Response 201**
+```json
+{
+  "success": true,
+  "status": 201,
+  "data": {
+    "previousPlanId": "uuid",
+    "completionSummary": {
+      "planId": "uuid",
+      "title": "Travel English A2 Roadmap",
+      "level": "A2",
+      "completedAt": "2026-05-22T10:00:00.000Z",
+      "completedScenes": [
+        "Airport check-in",
+        "Hotel check-in"
+      ],
+      "scoreDelta": {
+        "grammar": { "before": 62, "after": 74 },
+        "vocabulary": { "before": 66, "after": 73 },
+        "naturalness": { "before": 58, "after": 71 }
+      },
+      "reward": {
+        "badgeTitle": "A2 Travel English Roadmap",
+        "xpBonus": 120
+      },
+      "nextRoadmap": {
+        "title": "Travel English vocabulary expansion",
+        "level": "A2",
+        "focusSkill": "VOCABULARY"
+      }
+    },
+    "nextPlan": {
+      "plan": {
+        "id": "uuid",
+        "status": "ACTIVE",
+        "derivedState": "IN_PROGRESS",
+        "title": "Travel English A2 Roadmap",
         "focusSkill": "VOCABULARY"
       }
     }
@@ -1038,8 +1100,10 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
         "id": "uuid",
         "title": "Airport Check-in",
         "category": "TRAVEL",
-        "difficulty": "A2",
         "description": "Check in luggage and ask about gate, boarding time, and seat.",
+        "missionText": "Complete the airport check-in conversation naturally.",
+        "difficulty": "A2",
+        "estimatedMinutes": 7,
         "characterName": "David",
         "characterRole": "Check-in Staff"
       },
@@ -1047,8 +1111,10 @@ Lấy kết quả của một session đã kết thúc. Endpoint này chưa ph�
       "sourceSummary": {
         "title": "Airport Check-in",
         "category": "TRAVEL",
-        "difficulty": "A2",
         "description": "Check in luggage and ask about gate, boarding time, and seat.",
+        "missionText": "Complete the airport check-in conversation naturally.",
+        "difficulty": "A2",
+        "estimatedMinutes": 7,
         "characterName": "David",
         "characterRole": "Check-in Staff"
       },

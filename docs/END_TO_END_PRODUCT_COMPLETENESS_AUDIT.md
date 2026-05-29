@@ -126,7 +126,7 @@ Kết luận:
 
 ## 2.4. Level test + onboarding
 
-**Trạng thái:** `Đủ dùng nhưng còn một điểm lifecycle`
+**Trạng thái:** `Đã khép logic chính`
 
 Đã có:
 
@@ -135,31 +135,25 @@ Kết luận:
 - onboarding survey
 - generate learning plan sau onboarding
 
-Điểm còn hở:
-
-- Hiện có thể xảy ra flow:
+Luồng hiện tại:
 
 ```text
 level test complete
--> generate roadmap
--> user mới làm onboarding
--> generate roadmap lại lần nữa
+-> chỉ cập nhật level
+-> user làm onboarding
+-> generate roadmap lần đầu
 ```
 
-- Nghĩa là roadmap có thể được tạo 2 lần trong một hành trình đầu tiên.
+- `GET /learning-plan/current` trước onboarding sẽ không tự sinh roadmap.
+- Điều này làm cho roadmap đầu tiên có một thời điểm chính thức rõ ràng hơn.
 
-Tác động:
+Điểm còn thiếu:
 
-- Không làm hỏng hệ thống.
-- Nhưng lifecycle chưa thật gọn và chưa có một thời điểm duy nhất để nói:
-  - "đây là roadmap đầu tiên chính thức của user"
+- Nếu mobile gọi `GET /learning-plan/current` quá sớm, cần xử lý response `409` đúng nghĩa là "chưa sẵn sàng tạo roadmap".
 
 Kết luận:
 
-- Demo được.
-- Nếu polish thêm, nên chốt rõ:
-  - generate roadmap sau level test
-  - hay chỉ generate sau onboarding hoàn tất
+- Phần lifecycle chính của `level test -> onboarding -> roadmap` hiện đã gọn hơn và phù hợp với flow học tập.
 
 ---
 
@@ -378,9 +372,9 @@ Kết luận:
 
 ## 3. Điểm hở lớn nhất hiện tại
 
-## 3.1. Roadmap lifecycle outcome chưa khép hoàn toàn
+## 3.1. Roadmap lifecycle đã gần khép kín
 
-Đây là lỗ hổng lớn nhất nếu nhìn theo góc độ learning product.
+Đây từng là lỗ hổng lớn nhất theo góc độ learning product, nhưng hiện đã được khép phần chính.
 
 Đã có:
 
@@ -389,27 +383,25 @@ Kết luận:
 - complete step
 - auto update sau session complete
 - completion summary
+- reward roadmap được grant thật vào user XP
 - roadmap completed notification
 - next roadmap suggestion
+- explicit endpoint để start roadmap kế tiếp
 
 Chưa có:
 
-- reward roadmap được ghi thật vào trạng thái user
-  - cộng `xpBonus`
-  - badge roadmap thật
-- transition lifecycle rõ ràng sau completion
-  - archive roadmap cũ
-  - generate roadmap mới có chủ đích
-  - hoặc flow accept next roadmap
+- badge roadmap thật trong bảng badges/achievements chung
+- scheduler hoặc automation để chủ động đẩy user sang roadmap mới nếu muốn
+- analytics riêng cho roadmap completion rate / roadmap retention
 
 Hệ quả:
 
-- User có thể "hoàn thành roadmap", nhưng outcome mới dừng ở mức:
-  - response
-  - summary
-  - notification
+- User hoàn thành roadmap giờ đã nhận outcome thật hơn:
+  - `xpBonus` được cộng thật
+  - completion summary giữ được kết quả
+  - có thể bấm sang roadmap tiếp theo bằng endpoint riêng
 
-chưa thành một thay đổi thật mạnh trong hồ sơ học tập.
+Phần còn thiếu chủ yếu là polish sản phẩm, không còn là lỗ hổng lifecycle cốt lõi.
 
 ---
 
@@ -457,14 +449,13 @@ Cần nâng sau:
 
 - Voice realtime
 - In-app reminder
-- Roadmap completion outcome
 - Adaptive AI evaluation
 
 ## 4.3. Chưa nên hứa là hoàn chỉnh tuyệt đối
 
 - Push notification
 - Pronunciation scoring thật
-- Full roadmap post-completion lifecycle
+- Full roadmap badge system trong achievements chung
 
 ---
 
@@ -482,9 +473,9 @@ Nếu mục tiêu là:
 
 thì còn 3 việc nên làm tiếp:
 
-1. Grant reward roadmap thật vào user state
-2. Chốt next roadmap lifecycle
-3. Làm reminder/scheduler chủ động hơn
+1. Làm reminder/scheduler chủ động hơn
+2. Thêm roadmap badge vào achievements chung
+3. Nâng evaluator scene-aware hơn
 
 ---
 
@@ -492,17 +483,17 @@ thì còn 3 việc nên làm tiếp:
 
 ### Priority 1
 
-- Roadmap reward thật
-- Roadmap completion transition
-
-### Priority 2
-
 - Mobile render completion summary tốt hơn
 - In-app notification inbox hoàn chỉnh
 
-### Priority 3
+### Priority 2
 
 - Scene-aware evaluator sâu hơn
+- Roadmap badge trong achievements chung
+
+### Priority 3
+
+- Push reminder / scheduler / automation
 - Push notification / scheduler
 - Pronunciation assessment
 

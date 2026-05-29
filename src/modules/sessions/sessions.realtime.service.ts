@@ -45,12 +45,16 @@ function buildRealtimeInstructions(session: SessionContextRecord) {
   const learningGoal = session.user.learningGoal || 'GENERAL_ENGLISH';
   const voiceLabel = session.voiceProfile?.displayName || session.voiceSnapshotName || 'Scenio Voice';
   const styleTags = session.voiceProfile?.styleTags?.join(', ') || 'clear, friendly';
+  const characterRole = session.sourceType === 'CUSTOM_PRACTICE'
+    ? 'the assigned conversation partner'
+    : source.characterRole;
 
-  return `You are roleplaying as ${source.characterName}, the ${source.characterRole}, in the conversation "${source.title}".
+  return `You are roleplaying as ${source.characterName}, the ${characterRole}, in the conversation "${source.title}".
 
 Scenio session rules:
 - Stay in character at all times.
 - Speak only in English.
+- If any scene/persona/context field is written in Vietnamese or another language, silently interpret it and speak in natural English only.
 - Keep replies concise and natural for a ${level} learner.
 - Use short turns that are easy to follow in voice conversation.
 - Treat this like a live call, not a scripted lesson.
@@ -80,6 +84,68 @@ Your job:
 - sound like a believable human conversation partner`;
 }
 
+function uniqueValues(values: Array<string | null | undefined>) {
+  return values
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .filter((value, index, array) => array.indexOf(value) === index);
+}
+
+const SUPPORTED_REALTIME_VOICES = new Set([
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'sage',
+  'shimmer',
+  'verse',
+  'marin',
+  'cedar',
+]);
+
+function normalizeRealtimeVoice(voice: string | null | undefined) {
+  const normalized = voice?.trim().toLowerCase();
+  return normalized && SUPPORTED_REALTIME_VOICES.has(normalized) ? normalized : null;
+}
+
+function getRealtimeVoiceCandidates(
+  selectedVoice: string,
+  gender: string | null | undefined,
+  defaultVoice: string,
+) {
+  const supportedSelectedVoice = normalizeRealtimeVoice(selectedVoice);
+  const supportedDefaultVoice = normalizeRealtimeVoice(defaultVoice);
+  const genderFallbacks = gender === 'MALE'
+    ? ['echo', 'ash', 'alloy', 'cedar']
+    : gender === 'FEMALE'
+      ? [supportedSelectedVoice, 'marin', 'verse', 'shimmer']
+      : [supportedSelectedVoice, 'marin', 'echo', 'alloy'];
+
+  return uniqueValues([...genderFallbacks, supportedSelectedVoice, supportedDefaultVoice, 'marin']);
+}
+
+function getPreferredTranscriptionModel(
+  sttModels: Array<{ modelId: string }>,
+  defaultModel: string,
+) {
+  return sttModels.find((model) => model.modelId === 'gpt-4o-transcribe')?.modelId
+    ?? sttModels.find((model) => model.modelId === 'gpt-4o-transcribe-latest')?.modelId
+    ?? sttModels[0]?.modelId
+    ?? defaultModel;
+}
+
+function buildRealtimeTranscriptionPrompt(session: SessionContextRecord) {
+  const source = getConversationSource(session);
+
+  return [
+    'Transcribe only the learner speech in English.',
+    'The speaker is an English learner. Preserve grammar mistakes, hesitations, repeated words, and unnatural word choice exactly.',
+    'Do not correct, translate, summarize, or make the learner sound more fluent.',
+    `Conversation context: ${source.title}. Mission: ${source.missionText}. AI partner: ${source.characterName}.`,
+  ].join(' ');
+}
+
 /**
  * Function Objective - createRealtimeTokenForSession
  * Summary: Gọi OpenAI Realtime API để mint client secret cho session ACTIVE hiện tại.
@@ -96,22 +162,35 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
   const realtimeModels = realtimePlan.models.filter((model) => model.provider === AiProvider.OPENAI);
   const sttModels = sttPlan.models.filter((model) => model.provider === AiProvider.OPENAI);
   const candidateRealtimeModels = realtimeModels.length > 0 ? realtimeModels.map((model) => model.modelId) : [defaults.model];
-  const transcriptionModel = sttModels[0]?.modelId ?? defaults.transcriptionModel;
+  const candidateVoices = getRealtimeVoiceCandidates(
+    selectedVoice,
+    session.voiceProfile?.gender ?? null,
+    defaults.voice,
+  );
+  const transcriptionModel = getPreferredTranscriptionModel(sttModels, defaults.transcriptionModel);
+  const transcriptionPrompt = buildRealtimeTranscriptionPrompt(session);
 
   let realtime: Awaited<ReturnType<typeof createRealtimeClientSecret>> | null = null;
   const errors: string[] = [];
 
   for (const realtimeModel of candidateRealtimeModels) {
-    try {
-      realtime = await createRealtimeClientSecret({
-        instructions,
-        voice: selectedVoice,
-        model: realtimeModel,
-        transcriptionModel,
-      });
+    for (const voice of candidateVoices) {
+      try {
+        realtime = await createRealtimeClientSecret({
+          instructions,
+          voice,
+          model: realtimeModel,
+          transcriptionModel,
+          transcriptionPrompt,
+        });
+        break;
+      } catch (error: any) {
+        errors.push(`${realtimeModel}/${voice}: ${error?.message ?? 'unknown error'}`);
+      }
+    }
+
+    if (realtime) {
       break;
-    } catch (error: any) {
-      errors.push(`${realtimeModel}: ${error?.message ?? 'unknown error'}`);
     }
   }
 
@@ -143,7 +222,7 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
           gender: session.voiceProfile.gender,
           locale: session.voiceProfile.locale,
           accent: session.voiceProfile.accent,
-          realtimeVoiceId: session.voiceProfile.realtimeVoiceId,
+          realtimeVoiceId: realtime.voice,
         }
       : {
           id: null,
@@ -151,7 +230,7 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
           gender: null,
           locale: null,
           accent: null,
-          realtimeVoiceId: selectedVoice,
+          realtimeVoiceId: realtime.voice,
         },
   };
 }

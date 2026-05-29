@@ -8,6 +8,8 @@ import { SessionContextRecord, SessionMessageRecord } from './sessions.repositor
 const OPENAI_EVALUATOR_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const CLAUDE_EVALUATOR_MODEL = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
 const SHORT_EXPLANATION_LIMIT = 15;
+const NON_LATIN_SCRIPT_REGEX = /[\u0400-\u04FF\u0590-\u05FF\u0600-\u06FF\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u3130-\u318F\u31A0-\u31BF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/u;
+const VIETNAMESE_DIACRITIC_REGEX = /[ăâđêôơưĂÂĐÊÔƠƯáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/u;
 export type FeedbackLocale = 'en' | 'vi';
 
 const feedbackIssueSchema = z.object({
@@ -26,6 +28,11 @@ const aiEvaluationSchema = z.object({
     vocabulary: z.number(),
     naturalness: z.number(),
   }),
+  coaching: z.object({
+    summary: z.string().trim().min(1).max(420),
+    strengths: z.array(z.string().trim().min(1).max(220)).min(1).max(3),
+    improvements: z.array(z.string().trim().min(1).max(220)).min(1).max(3),
+  }).optional(),
   feedback: z.array(z.object({
     messageId: z.string(),
     hasError: z.boolean(),
@@ -79,6 +86,11 @@ export type SessionEvaluationResult = {
   };
   xpEarned: number;
   feedback: SessionFeedbackItem[];
+  coaching: {
+    summary: string;
+    strengths: string[];
+    improvements: string[];
+  } | null;
   evaluationMode: 'AI' | 'HEURISTIC_FALLBACK';
 };
 
@@ -106,11 +118,76 @@ function getUniqueWordCount(words: string[]) {
   return new Set(words).size;
 }
 
+function countMatches(value: string, regex: RegExp) {
+  return value.match(regex)?.length ?? 0;
+}
+
 function truncateExplanation(value: string | null | undefined) {
   if (!value) return null;
 
   const words = normalizeWhitespace(value).split(' ');
   return words.slice(0, SHORT_EXPLANATION_LIMIT).join(' ');
+}
+
+function getEnglishLetterRatio(value: string) {
+  const totalLetters = countMatches(value, /\p{L}/gu);
+  if (totalLetters === 0) {
+    return 1;
+  }
+
+  const englishLetters = countMatches(value, /[A-Za-z]/g);
+  return englishLetters / totalLetters;
+}
+
+function isNonEnglishResponse(value: string) {
+  const normalized = normalizeWhitespace(value);
+  if (!normalized) return false;
+
+  const words = getWords(normalized);
+  const englishLetterRatio = getEnglishLetterRatio(normalized);
+  const totalLetters = countMatches(normalized, /\p{L}/gu);
+  const hasNonLatinScript = NON_LATIN_SCRIPT_REGEX.test(normalized);
+  const hasVietnameseDiacritics = VIETNAMESE_DIACRITIC_REGEX.test(normalized);
+
+  if (hasNonLatinScript) return true;
+  if (hasVietnameseDiacritics && englishLetterRatio < 0.7) return true;
+  if (totalLetters >= 4 && words.length === 0) return true;
+  if (totalLetters >= 8 && englishLetterRatio < 0.45) return true;
+
+  return false;
+}
+
+function buildNonEnglishIssue(message: SessionMessageRecord, locale: FeedbackLocale = 'vi') {
+  const text = normalizeWhitespace(message.content);
+  if (!isNonEnglishResponse(text)) {
+    return null;
+  }
+
+  return {
+    type: ErrorType.NATURALNESS,
+    subtype: 'NON_ENGLISH_RESPONSE',
+    originalPhrase: text,
+    suggestion: 'Please answer in English for this practice scene.',
+    explanation: locale === 'en' ? 'The reply is not in English' : 'Câu trả lời chưa dùng tiếng Anh',
+    startIndex: 0,
+    endIndex: text.length,
+  };
+}
+
+function buildNonEnglishFeedback(message: SessionMessageRecord, locale: FeedbackLocale = 'vi'): SessionFeedbackItem | null {
+  const issue = buildNonEnglishIssue(message, locale);
+  if (!issue) return null;
+
+  return {
+    messageId: message.id,
+    hasError: true,
+    errorType: ErrorType.NATURALNESS,
+    originalPhrase: issue.originalPhrase,
+    suggestion: issue.suggestion,
+    explanation: issue.explanation,
+    isGood: false,
+    feedbackDetails: { issues: [issue] },
+  };
 }
 
 function getConversationSource(session: SessionContextRecord) {
@@ -170,6 +247,10 @@ Rules:
 - Judge only what is visible in the transcript. Do not judge pronunciation or audio quality.
 - Return JSON only. No markdown. No code fences.
 - Always include exactly one feedback object for every USER message id that appears in the transcript.
+- Include a short session-level coaching object that is specific to this transcript, not generic.
+- Coaching must mention concrete behavior from the session when possible, such as short replies, repeated phrases, a useful question, or a specific pattern of mistakes.
+- If a USER message is mostly not English or uses another language/script, it must be marked as an error.
+- Non-English replies must lower naturalness strongly and should not be treated as a good answer.
 - If a user message is acceptable, set:
   - hasError: false
   - errorType: null
@@ -203,6 +284,11 @@ Required JSON shape:
     "grammar": 0,
     "vocabulary": 0,
     "naturalness": 0
+  },
+  "coaching": {
+    "summary": "Một nhận xét ngắn, cụ thể về phiên này bằng ${feedbackLanguage}",
+    "strengths": ["Một điểm mạnh cụ thể dựa trên transcript"],
+    "improvements": ["Một việc nên cải thiện cụ thể cho phiên sau"]
   },
   "feedback": [
     {
@@ -444,6 +530,11 @@ async function callGeminiEvaluatorModel(modelId: string, messages: ProviderMessa
 }
 
 function buildHeuristicFeedback(message: SessionMessageRecord, locale: FeedbackLocale = 'vi'): SessionFeedbackItem {
+  const nonEnglishFeedback = buildNonEnglishFeedback(message, locale);
+  if (nonEnglishFeedback) {
+    return nonEnglishFeedback;
+  }
+
   const text = normalizeWhitespace(message.content);
   const words = getWords(text);
   const uniqueWordCount = getUniqueWordCount(words);
@@ -518,6 +609,14 @@ function buildHeuristicScores(messages: SessionMessageRecord[]) {
 
   const aggregates = userMessages.reduce(
     (acc, message) => {
+      if (isNonEnglishResponse(message.content)) {
+        acc.nonEnglishCount += 1;
+        acc.grammar += 28;
+        acc.vocabulary += 24;
+        acc.naturalness += 16;
+        return acc;
+      }
+
       const words = getWords(message.content);
       const uniqueWordCount = getUniqueWordCount(words);
       const hasPoliteCue = /\b(please|thank|could|would|can i|may i)\b/i.test(message.content);
@@ -529,8 +628,26 @@ function buildHeuristicScores(messages: SessionMessageRecord[]) {
       acc.naturalness += 56 + (hasPoliteCue ? 8 : 0) + (hasQuestion ? 6 : 0) + Math.min(words.length, 10) * 1.8;
       return acc;
     },
-    { grammar: 0, vocabulary: 0, naturalness: 0 },
+    { grammar: 0, vocabulary: 0, naturalness: 0, nonEnglishCount: 0 },
   );
+
+  if (aggregates.nonEnglishCount > 0) {
+    const nonEnglishRatio = aggregates.nonEnglishCount / userMessages.length;
+    const rawScores = {
+      grammar: aggregates.grammar / userMessages.length,
+      vocabulary: aggregates.vocabulary / userMessages.length,
+      naturalness: aggregates.naturalness / userMessages.length,
+    };
+    const scoreCaps = nonEnglishRatio >= 0.5
+      ? { grammar: 42, vocabulary: 38, naturalness: 28 }
+      : { grammar: 58, vocabulary: 52, naturalness: 42 };
+
+    return {
+      grammar: clampScore(Math.min(rawScores.grammar, scoreCaps.grammar), 20, 85),
+      vocabulary: clampScore(Math.min(rawScores.vocabulary, scoreCaps.vocabulary), 18, 82),
+      naturalness: clampScore(Math.min(rawScores.naturalness, scoreCaps.naturalness), 15, 78),
+    };
+  }
 
   return {
     grammar: clampScore(aggregates.grammar / userMessages.length, 45, 96),
@@ -599,6 +716,13 @@ function parseAiEvaluation(rawText: string, messages: SessionMessageRecord[], lo
   const userMessages = getUserMessages(messages);
   const parsed = aiEvaluationSchema.parse(JSON.parse(extractJsonObject(rawText)));
   const feedbackMap = new Map(parsed.feedback.map((item) => [item.messageId, item]));
+  const coaching = parsed.coaching
+    ? {
+        summary: normalizeWhitespace(parsed.coaching.summary).slice(0, 420),
+        strengths: parsed.coaching.strengths.map((item) => normalizeWhitespace(item).slice(0, 220)).filter(Boolean).slice(0, 3),
+        improvements: parsed.coaching.improvements.map((item) => normalizeWhitespace(item).slice(0, 220)).filter(Boolean).slice(0, 3),
+      }
+    : null;
 
   return {
     scores: {
@@ -612,6 +736,43 @@ function parseAiEvaluation(rawText: string, messages: SessionMessageRecord[], lo
         ? sanitizeFeedbackItem(rawItem, message)
         : buildHeuristicFeedback(message, locale);
     }),
+    coaching,
+  };
+}
+
+function enforceStrictLanguageRules(
+  result: Pick<SessionEvaluationResult, 'scores' | 'feedback' | 'coaching'>,
+  messages: SessionMessageRecord[],
+  locale: FeedbackLocale,
+) {
+  const userMessages = getUserMessages(messages);
+  const nonEnglishMessageCount = userMessages.filter((message) => isNonEnglishResponse(message.content)).length;
+
+  if (nonEnglishMessageCount === 0) {
+    return result;
+  }
+
+  const feedback = userMessages.map((message) => {
+    const strictFeedback = buildNonEnglishFeedback(message, locale);
+    const current = result.feedback.find((item) => item.messageId === message.id)
+      ?? buildHeuristicFeedback(message, locale);
+
+    return strictFeedback ?? current;
+  });
+
+  const nonEnglishRatio = nonEnglishMessageCount / userMessages.length;
+  const scoreCaps = nonEnglishRatio >= 0.5
+    ? { grammar: 45, vocabulary: 40, naturalness: 30 }
+    : { grammar: 60, vocabulary: 55, naturalness: 45 };
+
+  return {
+    scores: {
+      grammar: Math.min(result.scores.grammar, scoreCaps.grammar),
+      vocabulary: Math.min(result.scores.vocabulary, scoreCaps.vocabulary),
+      naturalness: Math.min(result.scores.naturalness, scoreCaps.naturalness),
+    },
+    feedback,
+    coaching: result.coaching,
   };
 }
 
@@ -636,7 +797,11 @@ export async function evaluateCompletedSession(input: SessionEvaluationInput): P
       },
     ], locale);
 
-    const parsed = parseAiEvaluation(rawText, input.messages, locale);
+    const parsed = enforceStrictLanguageRules(
+      parseAiEvaluation(rawText, input.messages, locale),
+      input.messages,
+      locale,
+    );
     return {
       scores: parsed.scores,
       xpEarned: computeSessionXp({
@@ -645,6 +810,7 @@ export async function evaluateCompletedSession(input: SessionEvaluationInput): P
         userTurnCount: userMessages.length,
       }),
       feedback: parsed.feedback,
+      coaching: parsed.coaching,
       evaluationMode: 'AI',
     };
   } catch {
@@ -656,6 +822,7 @@ export async function evaluateCompletedSession(input: SessionEvaluationInput): P
         userTurnCount: userMessages.length,
       }),
       feedback: heuristicFeedback,
+      coaching: null,
       evaluationMode: 'HEURISTIC_FALLBACK',
     };
   }

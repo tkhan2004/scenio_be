@@ -12,12 +12,12 @@ export const createVocabularySchema = z.object({
     })
     .superRefine((data, ctx) => {
       const hasSceneVocabulary = Boolean(data.sceneVocabularyId);
-      const hasManualVocabulary = Boolean(data.word && data.definition);
+      const hasManualVocabulary = Boolean(data.word);
 
       if (!hasSceneVocabulary && !hasManualVocabulary) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Cần gửi sceneVocabularyId hoặc cặp word/definition',
+          message: 'Cần gửi sceneVocabularyId hoặc word',
           path: ['sceneVocabularyId'],
         });
       }

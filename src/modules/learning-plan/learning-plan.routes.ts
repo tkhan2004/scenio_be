@@ -7,6 +7,7 @@ import {
   getCurrentLearningPlanSchema,
   getLearningPlanCompletionSummarySchema,
   refreshLearningPlanSchema,
+  startNextLearningPlanSchema,
 } from '../../schemas/learning-plan';
 import * as learningPlanController from './learning-plan.controller';
 
@@ -39,6 +40,17 @@ router.get(
   auth,
   validate(getLearningPlanCompletionSummarySchema),
   learningPlanController.getLearningPlanCompletionSummary,
+);
+
+/**
+ * @route   POST /api/learning-plan/:id/start-next
+ * @desc    Tạo roadmap kế tiếp từ roadmap đã completed
+ */
+router.post(
+  '/:id/start-next',
+  auth,
+  validate(startNextLearningPlanSchema),
+  learningPlanController.startNextLearningPlan,
 );
 
 /**

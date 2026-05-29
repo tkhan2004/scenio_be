@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { ConditionType, Prisma } from '@prisma/client';
 import prisma from '../../config/database';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
@@ -172,6 +172,84 @@ export async function findActiveBadgesWithEarnedStatus(userId: string, db: DbCli
 }
 
 /**
+ * Query Objective - findBadgeByTitleAndConditionType
+ * Summary: Tìm badge definition theo title và conditionType để grant roadmap badge hoặc badge hệ thống đặc thù.
+ * Query Shape: findFirst theo title + conditionType.
+ */
+export async function findBadgeByTitleAndConditionType(
+  title: string,
+  conditionType: ConditionType,
+  db: DbClient = prisma,
+) {
+  return db.badge.findFirst({
+    where: {
+      title,
+      conditionType,
+    },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      iconKey: true,
+      conditionType: true,
+      conditionValue: true,
+      xpReward: true,
+      isActive: true,
+    },
+  });
+}
+
+/**
+ * Query Objective - createBadge
+ * Summary: Tạo badge definition mới khi runtime cần một achievement chưa có sẵn trong seed.
+ * Query Shape: create vào bảng badges.
+ */
+export async function createBadge(
+  data: Prisma.BadgeCreateInput,
+  db: DbClient = prisma,
+) {
+  return db.badge.create({
+    data,
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      iconKey: true,
+      conditionType: true,
+      conditionValue: true,
+      xpReward: true,
+      isActive: true,
+    },
+  });
+}
+
+/**
+ * Query Objective - updateBadgeById
+ * Summary: Đồng bộ lại badge definition hiện có khi reward/icon/description thay đổi theo feature mới.
+ * Query Shape: update theo badgeId.
+ */
+export async function updateBadgeById(
+  badgeId: string,
+  data: Prisma.BadgeUpdateInput,
+  db: DbClient = prisma,
+) {
+  return db.badge.update({
+    where: { id: badgeId },
+    data,
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      iconKey: true,
+      conditionType: true,
+      conditionValue: true,
+      xpReward: true,
+      isActive: true,
+    },
+  });
+}
+
+/**
  * Query Objective - findSessionForXpGrant
  * Summary: Lấy session COMPLETED để cộng XP, kèm cờ xpGrantedAt cho idempotency.
  * Query Shape: findFirst theo sessionId + userId.
@@ -315,6 +393,30 @@ export async function createUserBadge(
 ) {
   return db.userBadge.create({
     data,
+    select: {
+      id: true,
+      earnedAt: true,
+    },
+  });
+}
+
+/**
+ * Query Objective - findUserBadgeByBadgeId
+ * Summary: Kiểm tra user đã nhận badge cụ thể hay chưa để giữ grant badge idempotent.
+ * Query Shape: findUnique theo composite userId_badgeId.
+ */
+export async function findUserBadgeByBadgeId(
+  userId: string,
+  badgeId: string,
+  db: DbClient = prisma,
+) {
+  return db.userBadge.findUnique({
+    where: {
+      userId_badgeId: {
+        userId,
+        badgeId,
+      },
+    },
     select: {
       id: true,
       earnedAt: true,

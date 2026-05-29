@@ -8,12 +8,21 @@ Backend phải biến learning plan thành một roadmap có vòng đời đầy
 
 ```text
 onboarding / level test
+-> onboarding completes required learning context
 -> generate active roadmap
 -> user luyện từng step
 -> session complete tự cập nhật step/progress
 -> roadmap completed
 -> trả completion summary, reward, và next roadmap suggestion
 ```
+
+Ghi chú lifecycle:
+
+- `level test` chỉ nên cập nhật `level`.
+- Roadmap đầu tiên chỉ nên được tạo sau khi onboarding đã có đủ:
+  - `learningGoal`
+  - `studyFrequency`
+  - `selfAssessment`
 
 ## 2. Response shape cần bổ sung
 
@@ -148,6 +157,25 @@ Suggested shape:
 }
 ```
 
+## 5b. Start next roadmap endpoint
+
+Backend nên có endpoint explicit cho CTA sau completion:
+
+```http
+POST /api/learning-plan/:id/start-next
+```
+
+Behavior:
+
+- chỉ cho phép khi roadmap hiện tại đã completed
+- grant reward thật nếu chưa grant
+- archive roadmap completed hiện tại
+- generate roadmap kế tiếp theo `completionSummary.nextRoadmap.focusSkill`
+- trả về:
+  - `previousPlanId`
+  - `completionSummary`
+  - `nextPlan`
+
 ## 6. Notifications/reminders
 
 Backend should create notifications for:
@@ -178,3 +206,4 @@ After backend is done, mobile should only need to:
 - parse new `targetOutcome`, `completionCriteria`, `reward`, `schedule`
 - replace local completion preview with real `completionSummary`
 - navigate to roadmap completion automatically when backend says plan is completed
+- gọi `POST /learning-plan/:id/start-next` khi user bấm `Start next roadmap`
