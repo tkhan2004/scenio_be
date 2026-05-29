@@ -1454,6 +1454,10 @@ export async function completeSession(
     throw Object.assign(new Error('Phiên học không tồn tại'), { code: 'NOT_FOUND', status: 404 });
   }
 
+  if (session.status === 'COMPLETED') {
+    return getSessionResult(userId, params, options);
+  }
+
   return completeSessionWithEvaluation(userId, session, undefined, options);
 }
 
