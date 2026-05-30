@@ -1,4 +1,4 @@
-import { ConditionType, MissionType, NotificationType, Prisma } from '@prisma/client';
+import { ConditionType, Level, MissionType, NotificationType, Prisma } from '@prisma/client';
 import prisma from '../../config/database';
 import { AddXpInput, UpdateMeInput, UpdateOnboardingInput } from '../../schemas/users';
 import * as missionsService from '../missions/missions.service';
@@ -12,6 +12,10 @@ function buildUserProfile(user: NonNullable<Awaited<ReturnType<typeof usersRepo.
     needsOnboarding: user.onboardingCompletedAt === null,
   };
 }
+
+const LEVEL_ORDER: Level[] = [Level.A1, Level.A2, Level.B1, Level.B2];
+const LEVEL_PROGRESS_REQUIRED_AVERAGE_SCORE = 75;
+const LEVEL_PROGRESS_REQUIRED_SESSIONS = 5;
 
 type ProgressSessionRecord = Awaited<ReturnType<typeof usersRepo.findCompletedSessionsForProgress>>[number];
 type TodayMissionRecord = Awaited<ReturnType<typeof usersRepo.findTodayUserMissions>>[number];
@@ -36,6 +40,10 @@ type RewardGrantResult = {
     xpReward: number;
   }>;
 };
+
+function hasOwnField<T extends object>(value: T, key: keyof any) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
 
 /**
  * Helper - getTodayDateString
@@ -113,6 +121,45 @@ function getSessionAverageScore(session: {
 
   const total = values.reduce((sum, value) => sum + value, 0);
   return Math.round(total / values.length);
+}
+
+function getNextLevel(level: Level) {
+  const index = LEVEL_ORDER.indexOf(level);
+  return index >= 0 && index < LEVEL_ORDER.length - 1 ? LEVEL_ORDER[index + 1] : null;
+}
+
+function getRecentAverageScore(sessions: ProgressSessionRecord[]) {
+  const recentSessions = sessions.slice(0, LEVEL_PROGRESS_REQUIRED_SESSIONS);
+  if (recentSessions.length === 0) return 0;
+
+  const total = recentSessions.reduce((sum, session) => sum + getSessionAverageScore(session), 0);
+  return Math.round(total / recentSessions.length);
+}
+
+function buildLevelProgress(args: {
+  currentLevel: Level;
+  targetLevel: Level | null;
+  sessions: ProgressSessionRecord[];
+}) {
+  const targetLevel = args.targetLevel ?? getNextLevel(args.currentLevel);
+  const nextLevel = targetLevel && targetLevel !== args.currentLevel ? targetLevel : getNextLevel(args.currentLevel);
+  const recentAverageScore = getRecentAverageScore(args.sessions);
+  const completedSessions = args.sessions.length;
+
+  return {
+    currentLevel: args.currentLevel,
+    targetLevel,
+    recentAverageScore,
+    requiredAverageScore: LEVEL_PROGRESS_REQUIRED_AVERAGE_SCORE,
+    completedSessions,
+    requiredSessions: LEVEL_PROGRESS_REQUIRED_SESSIONS,
+    canLevelUp: Boolean(
+      nextLevel
+      && completedSessions >= LEVEL_PROGRESS_REQUIRED_SESSIONS
+      && recentAverageScore >= LEVEL_PROGRESS_REQUIRED_AVERAGE_SCORE,
+    ),
+    nextLevel,
+  };
 }
 
 /**
@@ -408,19 +455,73 @@ export async function updateOnboarding(userId: string, input: UpdateOnboardingIn
     throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
   }
 
-  await usersRepo.updateUserById(userId, {
-    ...(input.level ? { level: input.level, needsLevelTest: false } : {}),
-    learningGoal: input.learningGoal ?? null,
-    studyFrequency: input.studyFrequency ?? null,
-    selfAssessment: input.selfAssessment ?? null,
+  const nextLevel = hasOwnField(input, 'level') ? input.level ?? user.level : user.level;
+  const nextTargetLevel = hasOwnField(input, 'targetLevel') ? input.targetLevel ?? null : user.targetLevel;
+  const nextLearningGoals = hasOwnField(input, 'learningGoals')
+    ? input.learningGoals ?? []
+    : user.learningGoals.length > 0
+      ? user.learningGoals
+      : user.learningGoal
+        ? [user.learningGoal]
+        : [];
+  const nextPracticeContexts = hasOwnField(input, 'practiceContexts')
+    ? input.practiceContexts ?? []
+    : user.practiceContexts;
+  const nextFocusSkills = hasOwnField(input, 'focusSkills')
+    ? input.focusSkills ?? []
+    : user.focusSkills.length > 0
+      ? user.focusSkills
+      : user.selfAssessment
+        ? [user.selfAssessment]
+        : [];
+  const nextStudyFrequency = hasOwnField(input, 'studyFrequency') ? input.studyFrequency ?? null : user.studyFrequency;
+  const nextDailyPracticeMinutes = hasOwnField(input, 'dailyPracticeMinutes')
+    ? input.dailyPracticeMinutes ?? null
+    : user.dailyPracticeMinutes;
+  const nextTargetOutcome = hasOwnField(input, 'targetOutcome') ? input.targetOutcome ?? null : user.targetOutcome;
+  const nextCorrectionPreference = hasOwnField(input, 'correctionPreference')
+    ? input.correctionPreference ?? null
+    : user.correctionPreference;
+  const nextLegacyLearningGoal = nextLearningGoals[0]
+    ?? (hasOwnField(input, 'learningGoal') ? input.learningGoal ?? null : user.learningGoal);
+  const nextLegacySelfAssessment = nextFocusSkills[0]
+    ?? (hasOwnField(input, 'selfAssessment') ? input.selfAssessment ?? null : user.selfAssessment);
+
+  const updatedUser = await usersRepo.updateUserById(userId, {
+    ...(hasOwnField(input, 'level') ? { level: nextLevel, needsLevelTest: false } : {}),
+    targetLevel: nextTargetLevel,
+    learningGoal: nextLegacyLearningGoal,
+    learningGoals: { set: nextLearningGoals },
+    practiceContexts: { set: nextPracticeContexts },
+    focusSkills: { set: nextFocusSkills },
+    studyFrequency: nextStudyFrequency,
+    selfAssessment: nextLegacySelfAssessment,
+    dailyPracticeMinutes: nextDailyPracticeMinutes,
+    targetOutcome: nextTargetOutcome,
+    correctionPreference: nextCorrectionPreference,
     onboardingCompletedAt: new Date(),
   });
+
   await learningPlanService.generateLearningPlanBestEffort(userId, {
     notify: true,
     notificationType: NotificationType.LEARNING_PLAN_READY,
   });
 
-  return { updated: true };
+  return {
+    updated: true,
+    user: {
+      level: updatedUser.level,
+      targetLevel: updatedUser.targetLevel,
+      learningGoals: updatedUser.learningGoals,
+      practiceContexts: updatedUser.practiceContexts,
+      focusSkills: updatedUser.focusSkills,
+      studyFrequency: updatedUser.studyFrequency,
+      dailyPracticeMinutes: updatedUser.dailyPracticeMinutes,
+      targetOutcome: updatedUser.targetOutcome,
+      correctionPreference: updatedUser.correctionPreference,
+      needsOnboarding: updatedUser.onboardingCompletedAt === null,
+    },
+  };
 }
 
 /**
@@ -441,27 +542,13 @@ export async function updateMe(userId: string, input: UpdateMeInput) {
     avatarUrl: input.avatarUrl,
   });
 
+  const profile = await usersRepo.findPublicUserProfileById(updatedUser.id);
+  if (!profile) {
+    throw Object.assign(new Error('Người dùng không tồn tại'), { code: 'NOT_FOUND', status: 404 });
+  }
+
   return {
-    user: buildUserProfile({
-      id: updatedUser.id,
-      email: updatedUser.email,
-      googleId: updatedUser.googleId,
-      displayName: updatedUser.displayName,
-      avatarUrl: updatedUser.avatarUrl,
-      level: updatedUser.level,
-      learningGoal: updatedUser.learningGoal,
-      studyFrequency: updatedUser.studyFrequency,
-      selfAssessment: updatedUser.selfAssessment,
-      needsLevelTest: updatedUser.needsLevelTest,
-      levelTestedAt: updatedUser.levelTestedAt,
-      onboardingCompletedAt: updatedUser.onboardingCompletedAt,
-      totalXp: updatedUser.totalXp,
-      streakDays: updatedUser.streakDays,
-      lastActiveDate: updatedUser.lastActiveDate,
-      isAdmin: updatedUser.isAdmin,
-      createdAt: updatedUser.createdAt,
-      updatedAt: updatedUser.updatedAt,
-    }),
+    user: buildUserProfile(profile),
   };
 }
 
@@ -493,6 +580,11 @@ export async function getProgress(userId: string) {
   }
 
   const sessions = await usersRepo.findCompletedSessionsForProgress(userId);
+  const levelProgress = buildLevelProgress({
+    currentLevel: user.level,
+    targetLevel: user.targetLevel,
+    sessions,
+  });
 
   return {
     summary: {
@@ -508,6 +600,7 @@ export async function getProgress(userId: string) {
       vocabulary: averageScore(sessions, 'vocabularyScore'),
       naturalness: averageScore(sessions, 'naturalnessScore'),
     },
+    levelProgress,
     sessionsHistory: sessions.slice(0, 10).map((session) => ({
       id: session.id,
       sourceType: session.sourceType,

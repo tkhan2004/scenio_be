@@ -184,6 +184,10 @@ function mapGoalToCategories(goal: string | null) {
       return [SceneCategory.TRAVEL, SceneCategory.DAILY];
     case 'DAILY':
       return [SceneCategory.DAILY, SceneCategory.SOCIAL];
+    case 'SOCIAL':
+      return [SceneCategory.SOCIAL, SceneCategory.DAILY];
+    case 'EXAM':
+      return [SceneCategory.WORK, SceneCategory.DAILY, SceneCategory.SOCIAL];
     default:
       return null;
   }
@@ -199,6 +203,8 @@ function mapSelfAssessmentToWeakSkill(selfAssessment: string | null): WeakSkill 
       return 'grammar';
     case 'VOCABULARY':
       return 'vocabulary';
+    case 'LISTENING':
+    case 'PRONUNCIATION':
     case 'CONFIDENCE':
     case 'NATURALNESS':
     default:

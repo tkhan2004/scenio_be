@@ -18,6 +18,7 @@ import * as learningPlanRepo from './learning-plan.repository';
 type PlanRecord = learningPlanRepo.LearningPlanRecord;
 type RecentPlanSession = Awaited<ReturnType<typeof learningPlanRepo.findRecentSessionsForPlan>>[number];
 type RoadmapWindowSession = Awaited<ReturnType<typeof learningPlanRepo.findCompletedSessionsForRoadmapWindow>>[number];
+type RecommendedPlanScene = NonNullable<Awaited<ReturnType<typeof scenesService.recommendScenes>>['scenes']>[number];
 type LearningPlanNotificationKind = 'LEARNING_PLAN_READY' | 'LEARNING_PLAN_REFRESHED';
 type ScheduleDay = 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI' | 'SAT' | 'SUN';
 type RoadmapDerivedState = 'IN_PROGRESS' | 'COMPLETED';
@@ -125,9 +126,20 @@ type RoadmapLifecycle = {
   nextRoadmapStartedAt?: string | null;
 };
 
+type OnboardingRoadmapProfile = {
+  targetLevel?: Level | null;
+  learningGoals?: string[];
+  practiceContexts?: string[];
+  focusSkills?: string[];
+  dailyPracticeMinutes?: number | null;
+  targetOutcome?: string | null;
+  correctionPreference?: string | null;
+};
+
 type RoadmapSnapshot = {
   selfAssessment?: string | null;
   recentSessionCount?: number;
+  onboardingProfile?: OnboardingRoadmapProfile;
   roadmapMeta?: RoadmapMeta;
   roadmapLifecycle?: RoadmapLifecycle;
 };
@@ -155,23 +167,77 @@ const SCENE_STEP_TYPES = new Set<LearningPlanStepType>([
   LearningPlanStepType.SCENE,
   LearningPlanStepType.RETRY_SCENE,
 ]);
+const PRACTICE_CONTEXT_KEYWORDS: Record<string, string[]> = {
+  INTERVIEW: ['interview', 'candidate', 'recruiter', 'job'],
+  MEETING: ['meeting', 'team', 'project', 'agenda'],
+  PRESENTATION: ['presentation', 'present', 'audience', 'slide'],
+  EMAIL_FOLLOW_UP: ['email', 'follow up', 'summary'],
+  AIRPORT: ['airport', 'boarding', 'flight', 'check-in'],
+  HOTEL: ['hotel', 'reservation', 'front desk', 'check-in'],
+  RESTAURANT: ['restaurant', 'menu', 'order', 'waiter'],
+  SMALL_TALK: ['small talk', 'chat', 'weekend', 'friend'],
+  SHOPPING: ['shopping', 'store', 'buy', 'size'],
+  PHONE_CALL: ['phone', 'call'],
+  MEDICAL: ['pharmacy', 'medicine', 'doctor', 'symptom', 'medical'],
+  CUSTOMER_SERVICE: ['customer service', 'support', 'refund', 'complaint', 'return'],
+};
 
-function mapSelfAssessmentToFocus(selfAssessment: string | null): LearningFocusSkill {
-  switch (selfAssessment) {
+function getNormalizedLearningGoals(user: Pick<LearningPlanUserContext, 'learningGoal' | 'learningGoals'>) {
+  return user.learningGoals.length > 0
+    ? user.learningGoals
+    : user.learningGoal
+      ? [user.learningGoal]
+      : [];
+}
+
+function getPrimaryLearningGoal(user: Pick<LearningPlanUserContext, 'learningGoal' | 'learningGoals'>) {
+  return getNormalizedLearningGoals(user)[0] ?? user.learningGoal ?? null;
+}
+
+function getNormalizedFocusSkills(user: Pick<LearningPlanUserContext, 'selfAssessment' | 'focusSkills'>) {
+  return user.focusSkills.length > 0
+    ? user.focusSkills
+    : user.selfAssessment
+      ? [user.selfAssessment]
+      : [];
+}
+
+function mapRequestedFocusSkill(skill: string | null): LearningFocusSkill {
+  switch (skill) {
     case 'GRAMMAR':
       return LearningFocusSkill.GRAMMAR;
     case 'VOCABULARY':
       return LearningFocusSkill.VOCABULARY;
     case 'CONFIDENCE':
+    case 'PRONUNCIATION':
       return LearningFocusSkill.CONFIDENCE;
+    case 'LISTENING':
     case 'NATURALNESS':
     default:
       return LearningFocusSkill.NATURALNESS;
   }
 }
 
-function getWeeklyTarget(studyFrequency: string | null) {
-  return STUDY_FREQUENCY_WEEKLY_TARGET[studyFrequency ?? 'REGULAR'] ?? 3;
+function mapSelfAssessmentToFocus(selfAssessment: string | null): LearningFocusSkill {
+  return mapRequestedFocusSkill(selfAssessment);
+}
+
+function getWeeklyTarget(studyFrequency: string | null, dailyPracticeMinutes: number | null) {
+  const base = STUDY_FREQUENCY_WEEKLY_TARGET[studyFrequency ?? 'REGULAR'] ?? 3;
+
+  if (typeof dailyPracticeMinutes !== 'number') {
+    return base;
+  }
+
+  if (dailyPracticeMinutes >= 25) {
+    return Math.min(base + 1, 6);
+  }
+
+  if (dailyPracticeMinutes <= 10) {
+    return Math.max(base - 1, 2);
+  }
+
+  return base;
 }
 
 function average(values: Array<number | null>) {
@@ -198,8 +264,41 @@ function roundAverageScore(session: {
   ]);
 }
 
-function getFocusFromSessions(sessions: RecentPlanSession[], selfAssessment: string | null) {
-  if (sessions.length === 0) return mapSelfAssessmentToFocus(selfAssessment);
+function getFocusScoreAverage(
+  focusSkill: LearningFocusSkill,
+  sessions: RecentPlanSession[],
+) {
+  switch (focusSkill) {
+    case LearningFocusSkill.GRAMMAR:
+      return average(sessions.map((session) => session.grammarScore));
+    case LearningFocusSkill.VOCABULARY:
+      return average(sessions.map((session) => session.vocabularyScore));
+    case LearningFocusSkill.CONFIDENCE:
+    case LearningFocusSkill.NATURALNESS:
+    default:
+      return average(sessions.map((session) => session.naturalnessScore));
+  }
+}
+
+function getFocusFromSessions(
+  sessions: RecentPlanSession[],
+  selfAssessment: string | null,
+  requestedFocusSkills: string[],
+) {
+  if (sessions.length === 0) {
+    return requestedFocusSkills[0]
+      ? mapRequestedFocusSkill(requestedFocusSkills[0])
+      : mapSelfAssessmentToFocus(selfAssessment);
+  }
+
+  const requestedFocusEntries = requestedFocusSkills
+    .map((skill) => mapRequestedFocusSkill(skill))
+    .filter((skill, index, array) => array.indexOf(skill) === index)
+    .map((skill) => [skill, getFocusScoreAverage(skill, sessions)] as [LearningFocusSkill, number]);
+
+  if (requestedFocusEntries.length > 0) {
+    return requestedFocusEntries.sort((a, b) => a[1] - b[1])[0][0];
+  }
 
   const scoreEntries: Array<[LearningFocusSkill, number]> = [
     [LearningFocusSkill.GRAMMAR, average(sessions.map((session) => session.grammarScore))],
@@ -229,6 +328,8 @@ function getGoalLabel(goal: string | null) {
     WORK: 'Work English',
     TRAVEL: 'Travel English',
     DAILY: 'Daily English',
+    SOCIAL: 'Social English',
+    EXAM: 'Exam English',
     ALL: 'Everyday English',
   }[goal ?? 'ALL'] ?? 'Everyday English';
 }
@@ -240,24 +341,50 @@ function getPlanTitle(goal: string | null, level: Level) {
 function getPlanSummary(args: {
   goal: string | null;
   level: Level;
+  targetLevel: Level | null;
   focusSkill: LearningFocusSkill;
   weeklyTarget: number;
+  dailyPracticeMinutes: number | null;
 }) {
-  return `Lộ trình ${args.weeklyTarget} buổi/tuần cho trình độ ${args.level}, ưu tiên ${args.focusSkill.toLowerCase()} theo mục tiêu ${args.goal || 'GENERAL_ENGLISH'}.`;
+  const targetLevelText = args.targetLevel && args.targetLevel !== args.level
+    ? `, hướng tới ${args.targetLevel}`
+    : '';
+  const dailyMinutesText = args.dailyPracticeMinutes
+    ? `, khoảng ${args.dailyPracticeMinutes} phút mỗi ngày`
+    : '';
+
+  return `Lộ trình ${args.weeklyTarget} buổi/tuần cho trình độ ${args.level}${targetLevelText}${dailyMinutesText}, ưu tiên ${args.focusSkill.toLowerCase()} theo mục tiêu ${args.goal || 'GENERAL_ENGLISH'}.`;
 }
 
-function getTargetOutcome(goal: string | null, level: Level) {
-  switch (goal) {
+function getTargetOutcome(args: {
+  goal: string | null;
+  level: Level;
+  targetLevel: Level | null;
+  targetOutcome: string | null;
+}) {
+  if (args.targetOutcome) {
+    return args.targetOutcome;
+  }
+
+  const levelSuffix = args.targetLevel && args.targetLevel !== args.level
+    ? ` and progress toward ${args.targetLevel}`
+    : '';
+
+  switch (args.goal) {
     case 'WORK':
-      return `Handle 4 everyday work situations clearly at ${level} level.`;
+      return `Handle 4 everyday work situations clearly at ${args.level} level${levelSuffix}.`;
     case 'TRAVEL':
-      return `Handle 4 everyday travel situations clearly at ${level} level.`;
+      return `Handle 4 everyday travel situations clearly at ${args.level} level${levelSuffix}.`;
     case 'DAILY':
-      return `Manage 4 daily-life conversations with clearer replies at ${level} level.`;
+      return `Manage 4 daily-life conversations with clearer replies at ${args.level} level${levelSuffix}.`;
+    case 'SOCIAL':
+      return `Join everyday social conversations more naturally at ${args.level} level${levelSuffix}.`;
+    case 'EXAM':
+      return `Respond more clearly and accurately for exam-style English tasks at ${args.level} level${levelSuffix}.`;
     case 'ALL':
     case null:
     default:
-      return `Complete short real-life English conversations more clearly at ${level} level.`;
+      return `Complete short real-life English conversations more clearly at ${args.level} level${levelSuffix}.`;
   }
 }
 
@@ -357,7 +484,10 @@ function ensureUserReadyForLearningPlan(user: LearningPlanUserContext) {
     });
   }
 
-  if (!user.level || !user.learningGoal || !user.studyFrequency || !user.selfAssessment) {
+  const learningGoals = getNormalizedLearningGoals(user);
+  const focusSkills = getNormalizedFocusSkills(user);
+
+  if (!user.level || learningGoals.length === 0 || !user.studyFrequency || focusSkills.length === 0) {
     throw Object.assign(new Error('Thiếu dữ liệu học tập để tạo learning plan'), {
       code: 'LEARNING_PLAN_CONTEXT_INCOMPLETE',
       status: 409,
@@ -377,6 +507,8 @@ function getRoadmapSnapshot(sourceSnapshot: PlanRecord['sourceSnapshot']): Roadm
 function buildRoadmapMeta(args: {
   goal: string | null;
   level: Level;
+  targetLevel: Level | null;
+  targetOutcome: string | null;
   steps: Array<{ type: LearningPlanStepType }>;
   baselineScores: {
     grammar: number | null;
@@ -387,7 +519,12 @@ function buildRoadmapMeta(args: {
   const coreSceneCount = args.steps.filter((step) => SCENE_STEP_TYPES.has(step.type)).length;
 
   return {
-    targetOutcome: getTargetOutcome(args.goal, args.level),
+    targetOutcome: getTargetOutcome({
+      goal: args.goal,
+      level: args.level,
+      targetLevel: args.targetLevel,
+      targetOutcome: args.targetOutcome,
+    }),
     completionCriteria: getCompletionCriteria(args.steps.length, coreSceneCount),
     reward: getRoadmapReward(args.goal, args.level),
     baselineScores: args.baselineScores,
@@ -401,6 +538,7 @@ function getRoadmapLifecycle(sourceSnapshot: PlanRecord['sourceSnapshot']): Road
 function buildUpdatedSourceSnapshot(
   current: PlanRecord['sourceSnapshot'],
   patch: {
+    onboardingProfile?: OnboardingRoadmapProfile;
     roadmapMeta?: RoadmapMeta;
     roadmapLifecycle?: RoadmapLifecycle;
   },
@@ -409,6 +547,7 @@ function buildUpdatedSourceSnapshot(
 
   return {
     ...snapshot,
+    ...(patch.onboardingProfile ? { onboardingProfile: patch.onboardingProfile } : {}),
     ...(patch.roadmapMeta ? { roadmapMeta: patch.roadmapMeta } : {}),
     ...(patch.roadmapLifecycle ? { roadmapLifecycle: patch.roadmapLifecycle } : {}),
   } satisfies RoadmapSnapshot;
@@ -426,6 +565,10 @@ function getPlanProgressStats(
     SCENE_STEP_TYPES.has(step.type) &&
     (step.status === LearningPlanStepStatus.COMPLETED || step.completedCount >= step.targetCount)
   )).length;
+  const allStepsCompleted = plan.steps.length > 0 && completedSteps >= plan.steps.length;
+  const hasRequiredCompletionCounts =
+    completedSteps >= completionCriteria.requiredSteps &&
+    completedCoreScenes >= completionCriteria.requiredCoreScenes;
   const meetsScoreRequirement = recentAverageScore !== null &&
     recentAverageScore >= completionCriteria.minimumRecentAverageScore;
 
@@ -434,9 +577,8 @@ function getPlanProgressStats(
     completedCoreScenes,
     meetsScoreRequirement,
     isCompleted:
-      completedSteps >= completionCriteria.requiredSteps &&
-      completedCoreScenes >= completionCriteria.requiredCoreScenes &&
-      meetsScoreRequirement,
+      hasRequiredCompletionCounts &&
+      (meetsScoreRequirement || allStepsCompleted),
   };
 }
 
@@ -488,6 +630,8 @@ async function resolveRoadmapMeta(
   return buildRoadmapMeta({
     goal: plan.learningGoal,
     level: plan.level,
+    targetLevel: snapshot.onboardingProfile?.targetLevel ?? null,
+    targetOutcome: snapshot.onboardingProfile?.targetOutcome ?? null,
     steps: plan.steps.map((step) => ({ type: step.type })),
     baselineScores: {
       grammar: averageOrNull(beforeSessions.map((session) => session.grammarScore)),
@@ -835,11 +979,109 @@ async function buildLearningPlanResponse(
   };
 }
 
-async function buildPlanSteps(userId: string, focusSkill: LearningFocusSkill) {
-  const recommended = await scenesService.recommendScenes(userId, { limit: 5 });
-  const scenes = recommended.scenes ?? [];
+function getSceneLimitForDailyPracticeMinutes(dailyPracticeMinutes: number | null) {
+  if (typeof dailyPracticeMinutes !== 'number') return 5;
+  if (dailyPracticeMinutes <= 10) return 4;
+  if (dailyPracticeMinutes >= 25) return 6;
+  return 5;
+}
 
-  return scenes.map((scene, index) => ({
+function scoreSceneForPracticeContexts(scene: RecommendedPlanScene, practiceContexts: string[]) {
+  if (practiceContexts.length === 0) return 0;
+
+  const text = [
+    scene.title,
+    scene.description,
+    scene.missionText,
+    scene.characterName,
+    scene.characterRole,
+  ].join(' ').toLowerCase();
+
+  return practiceContexts.reduce((score, context) => {
+    const keywords = PRACTICE_CONTEXT_KEYWORDS[context] ?? [];
+    return score + keywords.reduce((contextScore, keyword) => (
+      text.includes(keyword.toLowerCase()) ? contextScore + 1 : contextScore
+    ), 0);
+  }, 0);
+}
+
+function sortScenesByPracticeContexts(scenes: RecommendedPlanScene[], practiceContexts: string[]) {
+  if (practiceContexts.length === 0) return scenes;
+
+  return [...scenes].sort((a, b) => {
+    const contextScoreDiff = scoreSceneForPracticeContexts(b, practiceContexts)
+      - scoreSceneForPracticeContexts(a, practiceContexts);
+    if (contextScoreDiff !== 0) return contextScoreDiff;
+
+    return (((b as any).score ?? 0) as number) - (((a as any).score ?? 0) as number);
+  });
+}
+
+function buildFocusBoosterStep(args: {
+  focusSkill: LearningFocusSkill;
+  sortOrder: number;
+}) {
+  if (args.focusSkill === LearningFocusSkill.VOCABULARY) {
+    return {
+      sceneId: null,
+      type: LearningPlanStepType.VOCABULARY_REVIEW,
+      status: LearningPlanStepStatus.LOCKED,
+      focusSkill: args.focusSkill,
+      title: 'Review useful phrases',
+      description: 'Revisit the most relevant words and phrases for this roadmap.',
+      reason: getStepReason(args.focusSkill),
+      sortOrder: args.sortOrder,
+      metadata: {
+        openAction: getStepOpenAction(LearningPlanStepType.VOCABULARY_REVIEW),
+      },
+    };
+  }
+
+  if (args.focusSkill === LearningFocusSkill.GRAMMAR) {
+    return {
+      sceneId: null,
+      type: LearningPlanStepType.GRAMMAR_PRACTICE,
+      status: LearningPlanStepStatus.LOCKED,
+      focusSkill: args.focusSkill,
+      title: 'Grammar booster practice',
+      description: 'Do one extra focused practice step for sentence accuracy.',
+      reason: getStepReason(args.focusSkill),
+      sortOrder: args.sortOrder,
+      metadata: {
+        openAction: getStepOpenAction(LearningPlanStepType.GRAMMAR_PRACTICE),
+      },
+    };
+  }
+
+  if (args.focusSkill === LearningFocusSkill.CONFIDENCE) {
+    return {
+      sceneId: null,
+      type: LearningPlanStepType.CUSTOM_PRACTICE,
+      status: LearningPlanStepStatus.LOCKED,
+      focusSkill: args.focusSkill,
+      title: 'Confidence follow-up practice',
+      description: 'Run one extra open-ended practice to improve confidence and response length.',
+      reason: getStepReason(args.focusSkill),
+      sortOrder: args.sortOrder,
+      metadata: {
+        openAction: getStepOpenAction(LearningPlanStepType.CUSTOM_PRACTICE),
+      },
+    };
+  }
+
+  return null;
+}
+
+async function buildPlanSteps(userId: string, focusSkill: LearningFocusSkill, userContext: LearningPlanUserContext) {
+  const recommended = await scenesService.recommendScenes(userId, {
+    limit: getSceneLimitForDailyPracticeMinutes(userContext.dailyPracticeMinutes),
+  });
+  const rankedScenes = sortScenesByPracticeContexts(
+    recommended.scenes ?? [],
+    userContext.practiceContexts,
+  );
+
+  const sceneSteps = rankedScenes.map((scene, index) => ({
     sceneId: scene.id,
     type: LearningPlanStepType.SCENE,
     status: index === 0 ? LearningPlanStepStatus.NEXT : LearningPlanStepStatus.LOCKED,
@@ -852,9 +1094,19 @@ async function buildPlanSteps(userId: string, focusSkill: LearningFocusSkill) {
       retrievalMode: (scene as any).retrievalMode ?? recommended.retrievalMode,
       score: (scene as any).score ?? null,
       similarity: (scene as any).similarity ?? null,
+      matchedPracticeContexts: userContext.practiceContexts.filter(
+        (context) => scoreSceneForPracticeContexts(scene, [context]) > 0,
+      ),
       openAction: getStepOpenAction(LearningPlanStepType.SCENE),
     },
   }));
+
+  const focusBoosterStep = buildFocusBoosterStep({
+    focusSkill,
+    sortOrder: sceneSteps.length + 1,
+  });
+
+  return focusBoosterStep ? [...sceneSteps, focusBoosterStep] : sceneSteps;
 }
 
 async function appendAdaptiveStepIfNeeded(args: {
@@ -1087,12 +1339,17 @@ export async function generateLearningPlan(
   }
   ensureUserReadyForLearningPlan(user);
 
-  const focusSkill = options.forcedFocusSkill ?? getFocusFromSessions(recentSessions, user.selfAssessment);
-  const weeklyTarget = getWeeklyTarget(user.studyFrequency);
-  const steps = await buildPlanSteps(userId, focusSkill);
+  const primaryGoal = getPrimaryLearningGoal(user);
+  const requestedFocusSkills = getNormalizedFocusSkills(user);
+  const focusSkill = options.forcedFocusSkill
+    ?? getFocusFromSessions(recentSessions, user.selfAssessment, requestedFocusSkills);
+  const weeklyTarget = getWeeklyTarget(user.studyFrequency, user.dailyPracticeMinutes);
+  const steps = await buildPlanSteps(userId, focusSkill, user);
   const roadmapMeta = buildRoadmapMeta({
-    goal: user.learningGoal,
+    goal: primaryGoal,
     level: user.level,
+    targetLevel: user.targetLevel,
+    targetOutcome: user.targetOutcome,
     steps,
     baselineScores: {
       grammar: averageOrNull(recentSessions.map((session) => session.grammarScore)),
@@ -1100,20 +1357,31 @@ export async function generateLearningPlan(
       naturalness: averageOrNull(recentSessions.map((session) => session.naturalnessScore)),
     },
   });
+  const onboardingProfile: OnboardingRoadmapProfile = {
+    targetLevel: user.targetLevel,
+    learningGoals: getNormalizedLearningGoals(user),
+    practiceContexts: user.practiceContexts,
+    focusSkills: requestedFocusSkills,
+    dailyPracticeMinutes: user.dailyPracticeMinutes,
+    targetOutcome: user.targetOutcome,
+    correctionPreference: user.correctionPreference,
+  };
 
   const plan = await prisma.$transaction(async (tx) => {
     await learningPlanRepo.archiveActiveLearningPlans(userId, tx);
     return learningPlanRepo.createLearningPlan({
       user: { connect: { id: userId } },
-      title: getPlanTitle(user.learningGoal, user.level),
+      title: getPlanTitle(primaryGoal, user.level),
       summary: getPlanSummary({
-        goal: user.learningGoal,
+        goal: primaryGoal,
         level: user.level,
+        targetLevel: user.targetLevel,
         focusSkill,
         weeklyTarget,
+        dailyPracticeMinutes: user.dailyPracticeMinutes,
       }),
       level: user.level,
-      learningGoal: user.learningGoal,
+      learningGoal: primaryGoal,
       studyFrequency: user.studyFrequency,
       focusSkill,
       weeklyTarget,
@@ -1121,6 +1389,7 @@ export async function generateLearningPlan(
       sourceSnapshot: {
         selfAssessment: user.selfAssessment,
         recentSessionCount: recentSessions.length,
+        onboardingProfile,
         roadmapMeta,
         roadmapLifecycle: {
           completedAt: null,
