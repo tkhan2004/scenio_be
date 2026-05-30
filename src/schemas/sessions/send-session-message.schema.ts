@@ -6,6 +6,7 @@ export const sendSessionMessageSchema = z.object({
     content: z.string().trim().min(1, 'content không được để trống').max(5000, 'content quá dài'),
     turnIndex: z.coerce.number().int().min(0).optional(),
     isFinal: z.boolean().default(true),
+    generateAiReply: z.boolean().default(false),
     providerEventId: z.string().trim().min(1).max(200).optional(),
     audioStartMs: z.coerce.number().int().min(0).optional(),
     audioEndMs: z.coerce.number().int().min(0).optional(),

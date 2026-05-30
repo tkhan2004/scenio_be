@@ -7,6 +7,7 @@ import {
   getVocabularyDeckDetailSchema,
   listVocabularySchema,
   listVocabularyDecksSchema,
+  pronounceVocabularySchema,
   reviewVocabularySchema,
 } from '../../schemas/vocabulary';
 import {
@@ -15,6 +16,7 @@ import {
   getVocabularyDeckDetailController,
   listVocabularyController,
   listVocabularyDecksController,
+  pronounceVocabularyController,
   reviewVocabularyController,
 } from './vocabulary.controller';
 
@@ -43,6 +45,12 @@ router.get('/decks/:sessionId', auth, validate(getVocabularyDeckDetailSchema), g
  * @desc    Lưu từ vựng mới theo chế độ auto hoặc manual
  */
 router.post('/', auth, validate(createVocabularySchema), createVocabularyController);
+
+/**
+ * @route   POST /api/vocabulary/pronounce
+ * @desc    Sinh pronunciation audio cho một từ/cụm từ bằng active TTS model
+ */
+router.post('/pronounce', auth, validate(pronounceVocabularySchema), pronounceVocabularyController);
 
 /**
  * @route   POST /api/vocabulary/:id/review

@@ -6,6 +6,7 @@ import {
   completeSessionSchema,
   createRealtimeTokenSchema,
   getSessionResultSchema,
+  getCustomPracticeConfigsSchema,
   levelTestSchema,
   sendSessionMessageSchema,
   sessionHintSchema,
@@ -16,6 +17,7 @@ import {
   abandonSessionController,
   completeSessionController,
   createRealtimeTokenController,
+  getRecentCustomPracticeConfigsController,
   getSessionResultController,
   levelTestController,
   sendSessionMessageController,
@@ -37,6 +39,17 @@ router.post('/start', auth, validate(startSessionSchema), startSessionController
  * @desc    Tạo custom practice session từ structured brief của user
  */
 router.post('/start-custom', auth, validate(startCustomSessionSchema), startCustomSessionController);
+
+/**
+ * @route   GET /api/sessions/custom-practices/recent
+ * @desc    Lấy custom practice templates gần đây để user luyện lại
+ */
+router.get(
+  '/custom-practices/recent',
+  auth,
+  validate(getCustomPracticeConfigsSchema),
+  getRecentCustomPracticeConfigsController,
+);
 
 /**
  * @route   POST /api/sessions/:id/realtime-token

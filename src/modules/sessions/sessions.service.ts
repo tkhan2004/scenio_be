@@ -7,6 +7,7 @@ import {
   CompleteSessionParams,
   CreateRealtimeTokenParams,
   GetSessionResultParams,
+  GetCustomPracticeConfigsQuery,
   LevelTestHistoryItem,
   LevelTestInput,
   SendSessionMessageInput,
@@ -58,11 +59,16 @@ const MESSAGE_SOURCE_MAP: Record<MessageSource, { role: MessageRole; modality: M
   AI_AUDIO: { role: MessageRole.AI, modality: MessageModality.AUDIO_TRANSCRIPT },
 };
 
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 type SessionCompletionResponse = {
   message?: ReturnType<typeof mapSessionMessage>;
   messages: ReturnType<typeof mapSessionMessage>[];
   session: {
     id: string;
+    sourceType: string;
     status: 'COMPLETED';
     endedAt: Date | null;
     xpEarned: number;
@@ -76,6 +82,7 @@ type SessionCompletionResponse = {
   };
   spokenCoaching: ReturnType<typeof sessionsSpokenCoachingService.buildSpokenCoachingSummary>;
   nextLearningAction: ReturnType<typeof buildNextLearningAction>;
+  improvementPlan: ReturnType<typeof buildSessionImprovementPlan>;
   rewards: {
     xpEarned: number;
     totalXp: number;
@@ -146,6 +153,47 @@ Rules:
 - Do not break the roleplay context.
 - Prefer nudging the learner toward the next useful question or sentence.
 - Avoid bullet points, labels, or JSON.`;
+}
+
+/**
+ * Helper - getSessionRoleplaySystemPrompt
+ * Summary: Tạo system prompt cho text roleplay runtime khi user đang chat text với scene/custom practice.
+ * Notes: Ưu tiên prompt đã lưu trong source, nếu không có thì dựng prompt ngắn theo context session.
+ */
+function getSessionRoleplaySystemPrompt(args: {
+  source: ReturnType<typeof getSessionConversationSource>;
+  learnerName?: string | null;
+  learnerLevel?: Level | null;
+  learningGoal?: string | null;
+}) {
+  const runtimeRules = [
+    'Runtime reply rules:',
+    '- Stay in character and respond as the scene partner, not as a tutor.',
+    '- Speak only in English.',
+    '- Keep each reply concise and natural for a mobile chat turn.',
+    '- Move the conversation toward the scene mission naturally.',
+    '- Do not provide long explanations or score feedback during the roleplay.',
+  ].join('\n');
+
+  if (args.source.systemPrompt?.trim()) {
+    return `${args.source.systemPrompt.trim()}\n\n${runtimeRules}`;
+  }
+
+  return `You are ${args.source.characterName}, the ${args.source.characterRole}, in an English roleplay practice app.
+
+Scene context:
+- Title: ${args.source.title}
+- Category: ${args.source.category}
+- Difficulty: ${args.source.difficulty}
+- Description: ${args.source.description}
+- Mission: ${args.source.missionText}
+
+Learner context:
+- Learner name: ${args.learnerName?.trim() || 'Learner'}
+- Learner English level: ${args.learnerLevel || Level.A2}
+- Learning goal: ${args.learningGoal || 'general communication'}
+
+${runtimeRules}`;
 }
 
 /**
@@ -517,6 +565,79 @@ function mapSessionMessage(message: sessionsRepo.SessionMessageRecord | sessions
   };
 }
 
+function toSessionProviderMessages(
+  messages: sessionsRepo.SessionMessageRecord[],
+): ProviderMessage[] {
+  return messages
+    .slice()
+    .reverse()
+    .filter((message) => !message.isHint)
+    .filter((message) => message.role === MessageRole.USER || message.role === MessageRole.AI)
+    .map<ProviderMessage>((message) => ({
+      role: message.role === MessageRole.USER ? 'user' : 'assistant',
+      content: message.content,
+    }));
+}
+
+async function generateSessionAiReply(args: {
+  session: sessionsRepo.SessionContextRecord;
+  turnIndex: number;
+}) {
+  const recentMessages = await sessionsRepo.findRecentMessagesForSession(args.session.id, 12);
+  const providerMessages = toSessionProviderMessages(recentMessages);
+  if (providerMessages.length === 0 || providerMessages[providerMessages.length - 1]?.role !== 'user') {
+    return {
+      aiReply: null as sessionsRepo.SessionMessageRecord | null,
+      aiReplyError: 'Không có user turn hợp lệ để sinh phản hồi AI.',
+    };
+  }
+
+  const source = getSessionConversationSource(args.session);
+  try {
+    const aiReplyText = await callTextProvider({
+      systemPrompt: getSessionRoleplaySystemPrompt({
+        source,
+        learnerName: args.session.user.displayName,
+        learnerLevel: args.session.user.level,
+        learningGoal: args.session.user.learningGoal,
+      }),
+      messages: providerMessages,
+      temperature: 0.6,
+      maxTokens: 180,
+    });
+
+    const normalizedContent = sessionsVoiceLearningService.normalizeTranscriptContent(aiReplyText);
+    if (!normalizedContent) {
+      return {
+        aiReply: null as sessionsRepo.SessionMessageRecord | null,
+        aiReplyError: 'AI không trả về nội dung hợp lệ.',
+      };
+    }
+
+    const aiReply = await sessionsRepo.createMessage({
+      sessionId: args.session.id,
+      role: MessageRole.AI,
+      content: normalizedContent,
+      turnIndex: args.turnIndex,
+      providerEventId: null,
+      modality: MessageModality.TEXT,
+      audioStartMs: null,
+      audioEndMs: null,
+      isFinal: true,
+    });
+
+    return {
+      aiReply,
+      aiReplyError: null as string | null,
+    };
+  } catch (error: any) {
+    return {
+      aiReply: null as sessionsRepo.SessionMessageRecord | null,
+      aiReplyError: error?.message ?? 'Không thể sinh phản hồi AI.',
+    };
+  }
+}
+
 /**
  * Helper - getTodayDateString
  * Summary: Trả về ngày hiện tại dạng YYYY-MM-DD để reward flow dùng chung với missions/users.
@@ -630,6 +751,183 @@ function buildNextLearningAction(input: {
   };
 }
 
+function mapImprovementFocus(raw: unknown) {
+  const value = String(raw ?? '').toUpperCase();
+  if (value === 'GRAMMAR' || value === 'VOCABULARY' || value === 'NATURALNESS') {
+    return value;
+  }
+  return 'NATURALNESS';
+}
+
+function getStringValue(raw: unknown) {
+  return typeof raw === 'string' ? raw : '';
+}
+
+function getImprovementTitle(focus: string) {
+  switch (focus) {
+    case 'GRAMMAR':
+      return 'Sửa cấu trúc câu từ transcript';
+    case 'VOCABULARY':
+      return 'Dùng từ chính xác hơn theo ngữ cảnh';
+    case 'NATURALNESS':
+    default:
+      return 'Nói tự nhiên hơn từ lượt vừa nói';
+  }
+}
+
+function getImprovementIssues(message: { feedbackDetails?: unknown }) {
+  if (!message.feedbackDetails || typeof message.feedbackDetails !== 'object' || !('issues' in message.feedbackDetails)) {
+    return [];
+  }
+
+  const issues = (message.feedbackDetails as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) return [];
+
+  return issues
+    .filter((issue): issue is Record<string, unknown> => Boolean(issue) && typeof issue === 'object')
+    .slice(0, 3);
+}
+
+function addImprovementItem(
+  items: Array<{
+    title: string;
+    body: string;
+    example: string | null;
+    focus: string;
+    priority: number;
+    sourceMessageId: string | null;
+    turnIndex: number | null;
+  }>,
+  seen: Set<string>,
+  item: {
+    title: string;
+    body: string | null | undefined;
+    example?: string | null;
+    focus: string;
+    priority: number;
+    sourceMessageId?: string | null;
+    turnIndex?: number | null;
+  },
+) {
+  const body = normalizeWhitespace(item.body ?? '');
+  const example = normalizeWhitespace(item.example ?? '');
+  if (!body && !example) return;
+
+  const key = `${item.focus}:${body}:${example}`.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+
+  items.push({
+    title: item.title,
+    body: body || 'Xem lại lượt nói được AI đánh dấu và thử nói lại rõ hơn.',
+    example: example || null,
+    focus: item.focus,
+    priority: item.priority,
+    sourceMessageId: item.sourceMessageId ?? null,
+    turnIndex: item.turnIndex ?? null,
+  });
+}
+
+function buildSessionImprovementPlan(input: {
+  messages: Array<{
+    id: string;
+    role: MessageRole;
+    turnIndex: number;
+    content: string;
+    isHint: boolean;
+    hasError?: boolean | null;
+    errorType?: ErrorType | null;
+    originalPhrase?: string | null;
+    suggestion?: string | null;
+    explanation?: string | null;
+    feedbackDetails?: unknown;
+  }>;
+  spokenCoaching: ReturnType<typeof sessionsSpokenCoachingService.buildSpokenCoachingSummary>;
+  nextLearningAction: ReturnType<typeof buildNextLearningAction>;
+}) {
+  const items: Array<{
+    title: string;
+    body: string;
+    example: string | null;
+    focus: string;
+    priority: number;
+    sourceMessageId: string | null;
+    turnIndex: number | null;
+  }> = [];
+  const seen = new Set<string>();
+  const userMessages = input.messages.filter((message) => (
+    message.role === MessageRole.USER && !message.isHint
+  ));
+
+  for (const message of userMessages) {
+    if (!message.hasError) continue;
+
+    const issues = getImprovementIssues(message);
+    const feedbackItems: Array<Record<string, unknown>> = issues.length > 0 ? issues : [{
+      type: message.errorType,
+      originalPhrase: message.originalPhrase,
+      suggestion: message.suggestion,
+      explanation: message.explanation,
+    }];
+
+    for (const issue of feedbackItems) {
+      const focus = mapImprovementFocus(issue.type ?? message.errorType);
+      const explanation = normalizeWhitespace(
+        getStringValue(issue.explanation) || message.explanation || '',
+      );
+      const suggestion = normalizeWhitespace(
+        getStringValue(issue.suggestion) || message.suggestion || '',
+      );
+      const originalPhrase = normalizeWhitespace(
+        getStringValue(issue.originalPhrase) || message.originalPhrase || message.content,
+      );
+      const body = explanation || (originalPhrase ? `Xem lại cách diễn đạt: "${originalPhrase}"` : null);
+      const example = suggestion
+        ? `Gợi ý nói lại: ${suggestion}`
+        : originalPhrase
+          ? `Câu gốc: ${originalPhrase}`
+          : null;
+
+      addImprovementItem(items, seen, {
+        title: getImprovementTitle(focus),
+        body,
+        example,
+        focus,
+        priority: items.length + 1,
+        sourceMessageId: message.id,
+        turnIndex: message.turnIndex,
+      });
+    }
+  }
+
+  for (const improvement of input.spokenCoaching?.improvements ?? []) {
+    addImprovementItem(items, seen, {
+      title: 'AI gợi ý luyện tiếp',
+      body: improvement,
+      example: null,
+      focus: input.nextLearningAction?.focus ?? 'NATURALNESS',
+      priority: items.length + 1,
+    });
+  }
+
+  if (input.nextLearningAction) {
+    addImprovementItem(items, seen, {
+      title: input.nextLearningAction.title,
+      body: input.nextLearningAction.reason,
+      example: input.nextLearningAction.suggestedSceneQuery
+        ? `Chủ đề luyện tiếp: ${input.nextLearningAction.suggestedSceneQuery}`
+        : null,
+      focus: input.nextLearningAction.focus,
+      priority: items.length + 1,
+    });
+  }
+
+  return items.slice(0, 4).map((item, index) => ({
+    ...item,
+    priority: index + 1,
+  }));
+}
+
 /**
  * Helper - assertSessionCanBeCompleted
  * Summary: Kiểm tra session còn ACTIVE và có đủ transcript tối thiểu để chấm điểm.
@@ -675,6 +973,21 @@ async function completeSessionWithEvaluation(
     messages: finalMessages,
     feedbackLocale,
   });
+  const evaluatedMessages = finalMessages.map((message) => {
+    const feedback = evaluation.feedback.find((item) => item.messageId === message.id);
+    if (!feedback) return message;
+    return {
+      ...message,
+      hasError: feedback.hasError,
+      errorType: feedback.errorType,
+      originalPhrase: feedback.originalPhrase,
+      suggestion: feedback.suggestion,
+      explanation: feedback.explanation,
+      isGood: feedback.isGood,
+      feedbackDetails: feedback.feedbackDetails,
+    };
+  });
+
   const spokenCoaching = sessionsSpokenCoachingService.buildSpokenCoachingSummary({
     session: {
       hintCount: session.hintCount,
@@ -683,17 +996,7 @@ async function completeSessionWithEvaluation(
       providerSessionId: session.providerSessionId,
       voiceSnapshotName: session.voiceSnapshotName,
     },
-    messages: finalMessages.map((message) => {
-      const feedback = evaluation.feedback.find((item) => item.messageId === message.id);
-      return {
-        ...message,
-        hasError: feedback?.hasError ?? message.hasError,
-        errorType: feedback?.errorType ?? message.errorType,
-        suggestion: feedback?.suggestion ?? message.suggestion,
-        explanation: feedback?.explanation ?? message.explanation,
-        isGood: feedback?.isGood ?? message.isGood,
-      };
-    }),
+    messages: evaluatedMessages,
     scores: {
       grammar: evaluation.scores.grammar,
       vocabulary: evaluation.scores.vocabulary,
@@ -761,11 +1064,27 @@ async function completeSessionWithEvaluation(
     })),
   });
 
+  const nextLearningAction = buildNextLearningAction({
+    scores: evaluation.scores,
+    feedbackItems: evaluation.feedback.map((item) => ({
+      hasError: item.hasError,
+      errorType: item.errorType,
+      subtypes: item.feedbackDetails.issues.map((issue) => issue.subtype).filter((subtype): subtype is string => Boolean(subtype)),
+    })),
+    sourceTitle: getSessionConversationSource(session).title,
+  });
+  const improvementPlan = buildSessionImprovementPlan({
+    messages: evaluatedMessages,
+    spokenCoaching,
+    nextLearningAction,
+  });
+
   return {
     ...(completion.message ? { message: mapSessionMessage(completion.message) } : {}),
-    messages: finalMessages.map(mapSessionMessage),
+    messages: evaluatedMessages.map(mapSessionMessage),
     session: {
       id: session.id,
+      sourceType: session.sourceType,
       status: 'COMPLETED',
       endedAt: completion.session.endedAt,
       xpEarned: evaluation.xpEarned,
@@ -783,15 +1102,8 @@ async function completeSessionWithEvaluation(
       scores: evaluation.scores,
     },
     spokenCoaching,
-    nextLearningAction: buildNextLearningAction({
-      scores: evaluation.scores,
-      feedbackItems: evaluation.feedback.map((item) => ({
-        hasError: item.hasError,
-        errorType: item.errorType,
-        subtypes: item.feedbackDetails.issues.map((issue) => issue.subtype).filter((subtype): subtype is string => Boolean(subtype)),
-      })),
-      sourceTitle: getSessionConversationSource(session).title,
-    }),
+    nextLearningAction,
+    improvementPlan,
     rewards: {
       xpEarned: evaluation.xpEarned,
       totalXp: completion.rewards.totalXp,
@@ -1329,6 +1641,64 @@ export async function startCustomSession(userId: string, input: StartCustomSessi
 }
 
 /**
+ * Function Objective - getRecentCustomPracticeConfigs
+ * Summary: Trả các custom practice template user đã tạo để mobile có thể reuse.
+ */
+export async function getRecentCustomPracticeConfigs(
+  userId: string,
+  query: GetCustomPracticeConfigsQuery,
+) {
+  const configs = await sessionsRepo.findRecentCustomPracticeConfigs(
+    userId,
+    query.limit,
+  );
+
+  return {
+    items: configs.map((config) => ({
+      id: config.id,
+      displayTitle: config.displayTitle,
+      displaySubtitle: config.displaySubtitle,
+      practiceGoal: config.practiceGoal,
+      successOutcome: config.successOutcome,
+      topicSummary: config.topicSummary,
+      contextType: config.contextType,
+      location: config.location,
+      conversationChannel: config.conversationChannel,
+      timePressure: config.timePressure,
+      specialConditions: config.specialConditions,
+      userRole: config.userRole,
+      userIntent: config.userIntent,
+      userEnglishLevel: config.userEnglishLevel,
+      userPersonaNotes: config.userPersonaNotes,
+      aiRole: config.aiRole,
+      aiDisplayName: config.aiDisplayName,
+      aiRelationshipToUser: config.aiRelationshipToUser,
+      aiPrimaryGoal: config.aiPrimaryGoal,
+      aiBehaviorStyle: config.aiBehaviorStyle,
+      aiGenderPresentation: config.aiGenderPresentation,
+      aiVoicePresetId: config.aiVoicePresetId,
+      aiVoiceTone: config.aiVoiceTone,
+      aiSpeechSpeed: config.aiSpeechSpeed,
+      aiAccentPreference: config.aiAccentPreference,
+      difficulty: config.difficulty,
+      conversationLength: config.conversationLength,
+      targetMinutes: config.estimatedMinutes,
+      correctionStyle: config.correctionStyle,
+      hintFrequency: config.hintFrequency,
+      responseComplexity: config.responseComplexity,
+      focusSkills: config.focusSkills,
+      mustUseVocabulary: config.mustUseVocabulary,
+      avoidTopics: config.avoidTopics,
+      customInstructions: config.customInstructions,
+      missionText: config.missionText,
+      estimatedMinutes: config.estimatedMinutes,
+      createdAt: config.createdAt,
+      updatedAt: config.updatedAt,
+    })),
+  };
+}
+
+/**
  * Function Objective - createRealtimeToken
  * Summary: Mint Realtime client secret cho một session ACTIVE thuộc user hiện tại.
  * Inputs: userId và session params đã validate.
@@ -1437,6 +1807,30 @@ export async function sendSessionMessage(
     audioEndMs: input.audioEndMs ?? null,
     isFinal: true,
   });
+
+  if (
+    !input.completeSession
+    && input.generateAiReply
+    && input.source === 'USER_TEXT'
+    && session.modality === SessionModality.TEXT
+  ) {
+    const generated = await generateSessionAiReply({
+      session,
+      turnIndex,
+    });
+
+    return {
+      stored: true,
+      message: mapSessionMessage(storedMessage),
+      aiReply: generated.aiReply ? mapSessionMessage(generated.aiReply) : null,
+      aiReplyError: generated.aiReplyError,
+      session: {
+        id: session.id,
+        status: session.status,
+        endedAt: session.endedAt,
+      },
+    };
+  }
 
   return {
     stored: true,
@@ -1617,6 +2011,24 @@ export async function getSessionResult(
     },
     locale: feedbackLocale,
   });
+  const nextLearningAction = buildNextLearningAction({
+    scores: {
+      grammar: session.grammarScore,
+      vocabulary: session.vocabularyScore,
+      naturalness: session.naturalnessScore,
+    },
+    feedbackItems: session.messages.map((message) => ({
+      hasError: message.hasError,
+      errorType: message.errorType,
+      subtypes: extractIssueSubtypes(message.feedbackDetails),
+    })),
+    sourceTitle: source.title,
+  });
+  const improvementPlan = buildSessionImprovementPlan({
+    messages: session.messages,
+    spokenCoaching,
+    nextLearningAction,
+  });
 
   return {
     session: {
@@ -1709,19 +2121,8 @@ export async function getSessionResult(
       naturalness: session.naturalnessScore,
     },
     spokenCoaching,
-    nextLearningAction: buildNextLearningAction({
-      scores: {
-        grammar: session.grammarScore,
-        vocabulary: session.vocabularyScore,
-        naturalness: session.naturalnessScore,
-      },
-      feedbackItems: session.messages.map((message) => ({
-        hasError: message.hasError,
-        errorType: message.errorType,
-        subtypes: extractIssueSubtypes(message.feedbackDetails),
-      })),
-      sourceTitle: source.title,
-    }),
+    nextLearningAction,
+    improvementPlan,
   };
 }
 

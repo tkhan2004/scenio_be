@@ -1,6 +1,7 @@
 export * from './level-test.schema';
 export * from './start-session.schema';
 export * from './start-custom-session.schema';
+export * from './get-custom-practice-configs.schema';
 export * from './create-realtime-token.schema';
 export * from './send-session-message.schema';
 export * from './complete-session.schema';

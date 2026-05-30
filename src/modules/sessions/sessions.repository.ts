@@ -374,6 +374,58 @@ export async function createCustomPracticeConfig(
   });
 }
 
+export async function findRecentCustomPracticeConfigs(
+  userId: string,
+  limit: number,
+  db: DbClient = prisma,
+) {
+  return db.customPracticeConfig.findMany({
+    where: { userId },
+    orderBy: { updatedAt: 'desc' },
+    take: limit,
+    select: {
+      id: true,
+      practiceGoal: true,
+      successOutcome: true,
+      topicSummary: true,
+      contextType: true,
+      location: true,
+      conversationChannel: true,
+      timePressure: true,
+      specialConditions: true,
+      userRole: true,
+      userIntent: true,
+      userEnglishLevel: true,
+      userPersonaNotes: true,
+      aiRole: true,
+      aiDisplayName: true,
+      aiRelationshipToUser: true,
+      aiPrimaryGoal: true,
+      aiBehaviorStyle: true,
+      aiGenderPresentation: true,
+      aiVoicePresetId: true,
+      aiVoiceTone: true,
+      aiSpeechSpeed: true,
+      aiAccentPreference: true,
+      difficulty: true,
+      conversationLength: true,
+      correctionStyle: true,
+      hintFrequency: true,
+      responseComplexity: true,
+      focusSkills: true,
+      mustUseVocabulary: true,
+      avoidTopics: true,
+      customInstructions: true,
+      displayTitle: true,
+      displaySubtitle: true,
+      missionText: true,
+      estimatedMinutes: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+}
+
 /**
  * Query Objective - createMessage
  * Summary: Lưu message transcript hoặc hint thuộc về session.

@@ -61,6 +61,7 @@ export async function findSceneEmbeddingMetadata(sceneId: string) {
       outputDimension: true,
       provider: true,
       modelId: true,
+      metadata: true,
     },
   });
 }
@@ -101,6 +102,10 @@ export async function deleteSceneEmbedding(sceneId: string) {
   return prisma.sceneEmbedding.deleteMany({
     where: { sceneId },
   });
+}
+
+export async function countSceneEmbeddings() {
+  return prisma.sceneEmbedding.count();
 }
 
 export async function hasPgvectorColumn() {
@@ -170,3 +175,42 @@ export async function searchSimilarSceneEmbeddings(input: {
   }));
 }
 
+export async function findSemanticSearchCandidates(input: {
+  allowedLevels: Level[];
+  limit: number;
+  excludeSceneIds?: string[];
+}) {
+  return prisma.sceneEmbedding.findMany({
+    where: {
+      scene: {
+        isActive: true,
+        difficulty: {
+          in: input.allowedLevels,
+        },
+        ...(input.excludeSceneIds && input.excludeSceneIds.length > 0
+          ? {
+              id: {
+                notIn: input.excludeSceneIds,
+              },
+            }
+          : {}),
+      },
+    },
+    take: input.limit,
+    include: {
+      scene: {
+        select: {
+          id: true,
+          title: true,
+          category: true,
+          description: true,
+          missionText: true,
+          difficulty: true,
+          estimatedMinutes: true,
+          characterName: true,
+          characterRole: true,
+        },
+      },
+    },
+  });
+}
