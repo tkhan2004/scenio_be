@@ -45,12 +45,12 @@ This repository contains the **Express.js Backend** for Scenio. It serves as the
 
 ### Database & ORM
 - **Relational Object Store:** [PostgreSQL](https://www.postgresql.org/) (v15.x)
-- **Vector Database:** [Chroma](https://www.trychroma.com/) for semantic search
+- **Vector Database:** Pgvector (PostgreSQL) for semantic search
 - **ORM:** [Prisma](https://www.prisma.io/) (v5.x) for type-safe database interactions
 
 ### AI & NLP
 - **LLM Integration:** [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-typescript) (Claude 3.5 Sonnet) & [OpenAI SDK](https://platform.openai.com/docs/libraries)
-- **Embeddings:** `text-embedding-3-small` for vectorizing context
+- **Embeddings:** `gemini-embedding-2` for vectorizing context
 
 ### Security & Utilities
 - **Auth:** `jsonwebtoken`, `bcryptjs`, `google-auth-library`
@@ -164,11 +164,11 @@ Populate the `.env` file with your specific credentials:
 PORT=3000
 NODE_ENV=development
 
-# Database & Vector DB
-DATABASE_URL=postgresql://postgres:password@localhost:5432/scenio_db
+# Database & Vector DB (Optional)
+<!-- DATABASE_URL=postgresql://postgres:password@localhost:5432/scenio_db
 CHROMA_HOST=localhost
 CHROMA_PORT=8000
-CHROMA_COLLECTION=scenio_scenes
+CHROMA_COLLECTION=scenio_scenes -->
 
 # Authentication
 JWT_SECRET=your_super_secret_jwt_key
@@ -240,5 +240,5 @@ The standard REST API will be available at `http://localhost:3000/api`.
 ---
 
 <div align="center">
-  <i>Built with ❤️ by the Scenio Architecture Team.</i>
+  <i>Built with ❤️ by Thanh Khang.</i>
 </div>
