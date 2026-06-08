@@ -5,6 +5,7 @@ import {
   DeleteVocabularyParams,
   GetVocabularyDeckDetailParams,
   ListVocabularyQuery,
+  PronounceVocabularyInput,
   ReviewVocabularyInput,
   ReviewVocabularyParams,
 } from '../../schemas/vocabulary';
@@ -88,6 +89,26 @@ export const createVocabularyController = async (req: Request, res: Response, ne
     const input = (req as any).validatedBody as CreateVocabularyInput;
     const result = await vocabularyService.createVocabulary(userId, input);
     ok(res, result, 201);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * HTTP Handler - pronounceVocabularyController
+ * Summary: Sinh audio pronunciation cho text vocabulary và stream binary về client.
+ * Inputs: req, res, next.
+ * Behavior: Lấy validatedBody -> gọi service -> set audio headers -> send binary.
+ */
+export const pronounceVocabularyController = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const input = (req as any).validatedBody as PronounceVocabularyInput;
+    const result = await vocabularyService.pronounceVocabulary(input);
+
+    res.setHeader('Content-Type', result.mimeType);
+    res.setHeader('X-TTS-Provider', result.provider);
+    res.setHeader('X-TTS-Model', result.modelId);
+    res.status(200).send(result.audio);
   } catch (error) {
     next(error);
   }

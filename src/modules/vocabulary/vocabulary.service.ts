@@ -1,11 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { AiFeatureType, AiProvider, ConditionType, MissionType, Prisma } from '@prisma/client';
 import prisma from '../../config/database';
+import { getRealtimeDefaults } from '../../config/realtime';
+import { synthesizeElevenLabsSpeech, synthesizeOpenAISpeech } from '../../config/tts';
 import {
   CreateVocabularyInput,
   DeleteVocabularyParams,
   GetVocabularyDeckDetailParams,
   ListVocabularyQuery,
+  PronounceVocabularyInput,
   ReviewVocabularyInput,
   ReviewVocabularyParams,
 } from '../../schemas/vocabulary';
@@ -19,6 +22,7 @@ type BadgeRecord = Awaited<ReturnType<typeof usersRepo.findActiveBadgesWithEarne
 const SRS_INTERVAL_DAYS = [1, 3, 7, 14, 30, 60] as const;
 const MANUAL_VOCABULARY_PLACEHOLDER = 'A word saved from your practice transcript for review.';
 type RuntimeAiModel = Awaited<ReturnType<typeof getAiFeatureRuntimePlan>>['models'][number];
+const realtimeDefaults = getRealtimeDefaults();
 
 /**
  * Helper - getTodayDateString
@@ -87,6 +91,14 @@ function parseVocabularyDefinition(rawText: string) {
   }
 
   return normalizeDefinition(rawText).slice(0, 240);
+}
+
+function normalizePronunciationText(value: string) {
+  return value
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s'’-]/gu, '')
+    .slice(0, 120);
 }
 
 async function callOpenAiVocabularyModel(modelId: string, prompt: string) {
@@ -824,4 +836,38 @@ export async function deleteVocabulary(userId: string, params: DeleteVocabularyP
   return {
     deleted: true,
   };
+}
+
+/**
+ * Function Objective - pronounceVocabulary
+ * Summary: Sinh audio pronunciation cho một từ/cụm từ bằng active TTS runtime model.
+ * Inputs: text vocabulary từ mobile learner.
+ * Behavior: Chuẩn hóa text -> ưu tiên provider active của feature TTS -> fallback OpenAI nếu cần.
+ * Returns: Buffer audio và metadata để controller stream binary.
+ */
+export async function pronounceVocabulary(input: PronounceVocabularyInput) {
+  const text = normalizePronunciationText(input.text);
+  if (!text) {
+    throw Object.assign(new Error('Text pronunciation không hợp lệ'), {
+      code: 'VALIDATION_ERROR',
+      status: 400,
+    });
+  }
+
+  const ttsPlan = await getAiFeatureRuntimePlan(AiFeatureType.TTS);
+  const primaryModel = ttsPlan.models[0] ?? null;
+
+  if (primaryModel?.provider === AiProvider.ELEVENLABS) {
+    return synthesizeElevenLabsSpeech({
+      text,
+    });
+  }
+
+  const modelId = primaryModel?.provider === AiProvider.OPENAI ? primaryModel.modelId : null;
+  return synthesizeOpenAISpeech({
+    text,
+    voice: realtimeDefaults.voice || 'alloy',
+    model: modelId,
+    instructions: 'Pronounce the English word or phrase clearly, naturally, and at a learner-friendly pace.',
+  });
 }

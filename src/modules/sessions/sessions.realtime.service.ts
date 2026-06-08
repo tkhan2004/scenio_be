@@ -125,14 +125,14 @@ function getRealtimeVoiceCandidates(
   return uniqueValues([...genderFallbacks, supportedSelectedVoice, supportedDefaultVoice, 'marin']);
 }
 
-function getPreferredTranscriptionModel(
+function getCandidateTranscriptionModels(
   sttModels: Array<{ modelId: string }>,
   defaultModel: string,
 ) {
-  return sttModels.find((model) => model.modelId === 'gpt-4o-transcribe')?.modelId
-    ?? sttModels.find((model) => model.modelId === 'gpt-4o-transcribe-latest')?.modelId
-    ?? sttModels[0]?.modelId
-    ?? defaultModel;
+  return uniqueValues([
+    ...sttModels.map((model) => model.modelId),
+    defaultModel,
+  ]);
 }
 
 function buildRealtimeTranscriptionPrompt(session: SessionContextRecord) {
@@ -167,25 +167,31 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
     session.voiceProfile?.gender ?? null,
     defaults.voice,
   );
-  const transcriptionModel = getPreferredTranscriptionModel(sttModels, defaults.transcriptionModel);
+  const candidateTranscriptionModels = getCandidateTranscriptionModels(sttModels, defaults.transcriptionModel);
   const transcriptionPrompt = buildRealtimeTranscriptionPrompt(session);
 
   let realtime: Awaited<ReturnType<typeof createRealtimeClientSecret>> | null = null;
   const errors: string[] = [];
 
   for (const realtimeModel of candidateRealtimeModels) {
-    for (const voice of candidateVoices) {
-      try {
-        realtime = await createRealtimeClientSecret({
-          instructions,
-          voice,
-          model: realtimeModel,
-          transcriptionModel,
-          transcriptionPrompt,
-        });
+    for (const transcriptionModel of candidateTranscriptionModels) {
+      for (const voice of candidateVoices) {
+        try {
+          realtime = await createRealtimeClientSecret({
+            instructions,
+            voice,
+            model: realtimeModel,
+            transcriptionModel,
+            transcriptionPrompt,
+          });
+          break;
+        } catch (error: any) {
+          errors.push(`${realtimeModel}/${transcriptionModel}/${voice}: ${error?.message ?? 'unknown error'}`);
+        }
+      }
+
+      if (realtime) {
         break;
-      } catch (error: any) {
-        errors.push(`${realtimeModel}/${voice}: ${error?.message ?? 'unknown error'}`);
       }
     }
 
@@ -207,7 +213,9 @@ export async function createRealtimeTokenForSession(session: SessionContextRecor
     sessionConfig: {
       model: realtime.model,
       voice: realtime.voice,
-      transcriptionModel,
+      transcriptionModel: realtime.session?.audio?.input?.transcription?.model
+        ?? candidateTranscriptionModels[0]
+        ?? defaults.transcriptionModel,
       turnDetection: 'server_vad',
       outputModalities: ['audio'],
       instructions,

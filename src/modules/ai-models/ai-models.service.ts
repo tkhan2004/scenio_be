@@ -1,12 +1,28 @@
 import { AiFeatureType, AiProvider, Prisma } from '@prisma/client';
 import * as aiModelsRepo from './ai-models.repository';
+import { provider as llmProvider } from '../../config/llm';
+import { getRealtimeDefaults } from '../../config/realtime';
 
 const DEFAULT_EMBEDDING_TEXT = 'task: search result | query: recommend a roleplay scene for ordering coffee politely';
 const DEFAULT_GEMINI_EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL || process.env.EMBEDDING_MODEL || 'gemini-embedding-2';
 const DEFAULT_EMBEDDING_DIMENSION = Number(process.env.EMBEDDING_DIMENSIONS || '1536');
 const GEMINI_API_BASE_URL = (process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
+const DEFAULT_OPENAI_TEXT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const DEFAULT_CLAUDE_TEXT_MODEL = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
+const DEFAULT_OPENAI_TTS_MODEL = process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts';
+const realtimeDefaults = getRealtimeDefaults();
 
 type AiModelRecord = aiModelsRepo.AiModelRecord;
+type EffectiveSettingRecord = {
+  id: string;
+  featureType: AiFeatureType;
+  fallbackModelIds: string[];
+  outputDimension: number | null;
+  config: Prisma.JsonValue | null;
+  updatedAt: Date;
+  source: 'ADMIN' | 'SYSTEM_DEFAULT';
+  activeModel: AiModelRecord | null;
+};
 
 type EmbedTextInput = {
   text: string;
@@ -84,7 +100,7 @@ function prepareEmbeddingText(input: EmbedTextInput) {
   return text;
 }
 
-function mapModel(model: AiModelRecord, activeSetting?: aiModelsRepo.AiFeatureSettingRecord | null) {
+function mapModel(model: AiModelRecord, activeSetting?: EffectiveSettingRecord | null) {
   return {
     id: model.id,
     featureType: model.featureType,
@@ -104,12 +120,13 @@ function mapModel(model: AiModelRecord, activeSetting?: aiModelsRepo.AiFeatureSe
 }
 
 function mapSetting(
-  setting: aiModelsRepo.AiFeatureSettingRecord,
+  setting: EffectiveSettingRecord,
   modelById: Map<string, AiModelRecord> = new Map(),
 ) {
   return {
     id: setting.id,
     featureType: setting.featureType,
+    source: setting.source,
     outputDimension: setting.outputDimension,
     updatedAt: setting.updatedAt,
     activeModel: setting.activeModel ? mapModel(setting.activeModel, setting) : null,
@@ -117,6 +134,120 @@ function mapSetting(
       .map((id) => modelById.get(id))
       .filter((model): model is AiModelRecord => Boolean(model))
       .map((model) => mapModel(model, setting)),
+  };
+}
+
+function findCatalogModel(
+  models: AiModelRecord[],
+  featureType: AiFeatureType,
+  provider: AiProvider,
+  modelId: string,
+) {
+  return models.find((model) =>
+    model.featureType === featureType &&
+    model.provider === provider &&
+    model.modelId === modelId,
+  ) ?? null;
+}
+
+function resolveSyntheticSetting(
+  featureType: AiFeatureType,
+  models: AiModelRecord[],
+  existingSetting: aiModelsRepo.AiFeatureSettingRecord | undefined,
+): EffectiveSettingRecord {
+  if (existingSetting) {
+    return {
+      ...existingSetting,
+      source: 'ADMIN',
+    };
+  }
+
+  const defaultsByFeature: Record<
+    AiFeatureType,
+    {
+      provider: AiProvider;
+      modelId: string;
+      outputDimension?: number | null;
+      fallbacks?: Array<{ provider: AiProvider; modelId: string }>;
+    }
+  > = {
+    [AiFeatureType.EMBEDDING]: {
+      provider: AiProvider.GOOGLE,
+      modelId: DEFAULT_GEMINI_EMBEDDING_MODEL,
+      outputDimension: DEFAULT_EMBEDDING_DIMENSION,
+      fallbacks: [
+        { provider: AiProvider.OPENAI, modelId: 'text-embedding-3-small' },
+        { provider: AiProvider.GOOGLE, modelId: 'gemini-embedding-001' },
+      ],
+    },
+    [AiFeatureType.ROLEPLAY_LLM]: {
+      provider: llmProvider === 'claude' ? AiProvider.ANTHROPIC : AiProvider.OPENAI,
+      modelId: llmProvider === 'claude' ? DEFAULT_CLAUDE_TEXT_MODEL : DEFAULT_OPENAI_TEXT_MODEL,
+      fallbacks: [
+        { provider: AiProvider.OPENAI, modelId: 'gpt-5.4-mini' },
+        { provider: AiProvider.GOOGLE, modelId: 'gemini-2.5-flash' },
+        { provider: AiProvider.ANTHROPIC, modelId: 'claude-3-5-sonnet-20241022' },
+      ],
+    },
+    [AiFeatureType.EVALUATOR_LLM]: {
+      provider: llmProvider === 'claude' ? AiProvider.ANTHROPIC : AiProvider.OPENAI,
+      modelId: llmProvider === 'claude' ? DEFAULT_CLAUDE_TEXT_MODEL : DEFAULT_OPENAI_TEXT_MODEL,
+      fallbacks: [
+        { provider: AiProvider.OPENAI, modelId: 'gpt-5.4-mini' },
+        { provider: AiProvider.GOOGLE, modelId: 'gemini-2.5-flash' },
+        { provider: AiProvider.ANTHROPIC, modelId: 'claude-3-5-sonnet-20241022' },
+      ],
+    },
+    [AiFeatureType.REALTIME_VOICE]: {
+      provider: AiProvider.OPENAI,
+      modelId: realtimeDefaults.model,
+    },
+    [AiFeatureType.TTS]: {
+      provider: AiProvider.OPENAI,
+      modelId: DEFAULT_OPENAI_TTS_MODEL,
+      fallbacks: [
+        { provider: AiProvider.ELEVENLABS, modelId: 'eleven_flash_v2_5' },
+        { provider: AiProvider.OPENAI, modelId: 'tts-1' },
+      ],
+    },
+    [AiFeatureType.STT]: {
+      provider: AiProvider.OPENAI,
+      modelId: realtimeDefaults.transcriptionModel,
+      fallbacks: [
+        { provider: AiProvider.OPENAI, modelId: 'gpt-4o-mini-transcribe' },
+        { provider: AiProvider.OPENAI, modelId: 'whisper-1' },
+      ],
+    },
+  };
+
+  const defaultConfig = defaultsByFeature[featureType];
+  const activeModel = findCatalogModel(models, featureType, defaultConfig.provider, defaultConfig.modelId);
+  if (!activeModel) {
+    return {
+      id: `effective-${featureType.toLowerCase()}`,
+      featureType,
+      fallbackModelIds: [],
+      outputDimension: defaultConfig.outputDimension ?? null,
+      config: null,
+      updatedAt: new Date(0),
+      source: 'SYSTEM_DEFAULT',
+      activeModel: null,
+    };
+  }
+
+  const fallbackModelIds = (defaultConfig.fallbacks ?? [])
+    .map((item) => findCatalogModel(models, featureType, item.provider, item.modelId)?.id ?? null)
+    .filter((id): id is string => Boolean(id));
+
+  return {
+    id: `effective-${featureType.toLowerCase()}`,
+    featureType,
+    fallbackModelIds,
+    outputDimension: defaultConfig.outputDimension ?? null,
+    config: null,
+    updatedAt: new Date(0),
+    source: 'SYSTEM_DEFAULT',
+    activeModel,
   };
 }
 
@@ -331,16 +462,23 @@ async function runTextBenchmark(model: AiModelRecord, sampleText: string) {
  * Returns: Models cùng active setting hiện tại.
  */
 export async function listAiModels(featureType?: AiFeatureType) {
-  const [models, settings] = await Promise.all([
+  const [allModels, filteredModels, storedSettings] = await Promise.all([
+    aiModelsRepo.findAiModels(),
     aiModelsRepo.findAiModels(featureType),
-    aiModelsRepo.findAiFeatureSettings(featureType),
+    aiModelsRepo.findAiFeatureSettings(),
   ]);
-  const settingByFeature = new Map(settings.map((setting) => [setting.featureType, setting]));
-  const modelById = new Map(models.map((model) => [model.id, model]));
+  const storedSettingByFeature = new Map(storedSettings.map((setting) => [setting.featureType, setting]));
+  const effectiveSettings: EffectiveSettingRecord[] = Object.values(AiFeatureType).map((type) =>
+    resolveSyntheticSetting(type, allModels, storedSettingByFeature.get(type)),
+  );
+  const settingByFeature = new Map<AiFeatureType, EffectiveSettingRecord>(
+    effectiveSettings.map((setting) => [setting.featureType, setting]),
+  );
+  const modelById = new Map(allModels.map((model) => [model.id, model]));
 
   return {
-    settings: settings.map((setting) => mapSetting(setting, modelById)),
-    models: models.map((model) => mapModel(model, settingByFeature.get(model.featureType))),
+    settings: effectiveSettings.map((setting) => mapSetting(setting, modelById)),
+    models: filteredModels.map((model) => mapModel(model, settingByFeature.get(model.featureType))),
   };
 }
 
@@ -619,7 +757,10 @@ export async function connectAiModel(modelCatalogId: string, input: {
   });
 
   return {
-    setting: mapSetting(setting),
+    setting: mapSetting({
+      ...setting,
+      source: 'ADMIN',
+    }),
     benchmark: benchmarkResult.benchmark,
   };
 }

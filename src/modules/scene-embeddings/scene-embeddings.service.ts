@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { embedText } from '../ai-models/ai-models.service';
 import * as sceneEmbeddingsRepo from './scene-embeddings.repository';
-import { SceneEmbeddingScene } from './scene-embeddings.types';
+import { SceneEmbeddingMetadata, SceneEmbeddingScene } from './scene-embeddings.types';
 
 function hashText(value: string) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -14,6 +14,31 @@ function normalizeLine(value: string | null | undefined) {
 function truncatePrompt(value: string) {
   const normalized = normalizeLine(value);
   return normalized.length > 900 ? `${normalized.slice(0, 900)}...` : normalized;
+}
+
+function hasStoredEmbeddingValues(metadata: unknown, expectedDimension?: number | null) {
+  const values = (metadata as SceneEmbeddingMetadata | null | undefined)?.embeddingValues;
+  if (!Array.isArray(values) || values.length === 0) return false;
+  if (expectedDimension && values.length !== expectedDimension) return false;
+  return values.every((value) => typeof value === 'number' && Number.isFinite(value));
+}
+
+function cosineSimilarity(left: number[], right: number[]) {
+  if (left.length === 0 || left.length !== right.length) return 0;
+
+  let dot = 0;
+  let leftNorm = 0;
+  let rightNorm = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index] ?? 0;
+    const b = right[index] ?? 0;
+    dot += a * b;
+    leftNorm += a * a;
+    rightNorm += b * b;
+  }
+
+  if (leftNorm === 0 || rightNorm === 0) return 0;
+  return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
 }
 
 /**
@@ -53,7 +78,11 @@ export async function upsertSceneEmbedding(sceneId: string, options: { force?: b
   const embeddingText = buildSceneEmbeddingText(scene);
   const embeddingHash = hashText(embeddingText);
   const existing = await sceneEmbeddingsRepo.findSceneEmbeddingMetadata(scene.id);
-  if (!options.force && existing?.embeddingHash === embeddingHash) {
+  if (
+    !options.force
+    && existing?.embeddingHash === embeddingHash
+    && hasStoredEmbeddingValues(existing.metadata, existing.outputDimension)
+  ) {
     return {
       sceneId: scene.id,
       skipped: true,
@@ -73,6 +102,7 @@ export async function upsertSceneEmbedding(sceneId: string, options: { force?: b
     outputDimension: embedding.outputDimension,
     embeddingDimension: embedding.embeddingDimension,
     fallbackUsed: embedding.fallbackUsed,
+    embeddingValues: embedding.values,
   };
 
   const saved = await sceneEmbeddingsRepo.upsertSceneEmbeddingMetadata({
@@ -164,11 +194,51 @@ export async function searchSimilarScenes(input: {
     mode: 'QUERY',
   });
 
-  return sceneEmbeddingsRepo.searchSimilarSceneEmbeddings({
+  const vectorMatches = await sceneEmbeddingsRepo.searchSimilarSceneEmbeddings({
     values: embedding.values,
     allowedLevels: input.allowedLevels,
     limit: input.limit,
     excludeSceneIds: input.excludeSceneIds,
   });
-}
+  if (vectorMatches.length > 0) {
+    return vectorMatches;
+  }
 
+  if (await sceneEmbeddingsRepo.countSceneEmbeddings() === 0) {
+    await backfillSceneEmbeddings().catch((error: any) => {
+      console.warn(`[scene-embeddings] Lazy backfill failed: ${error?.message ?? error}`);
+    });
+  }
+
+  const metadataCandidates = await sceneEmbeddingsRepo.findSemanticSearchCandidates({
+    allowedLevels: input.allowedLevels,
+    limit: Math.max(input.limit * 6, 18),
+    excludeSceneIds: input.excludeSceneIds,
+  });
+
+  return metadataCandidates
+    .map((candidate) => {
+      const metadata = candidate.metadata as SceneEmbeddingMetadata | null;
+      const values = metadata?.embeddingValues;
+      if (!Array.isArray(values) || values.length !== embedding.values.length) {
+        return null;
+      }
+
+      const similarity = cosineSimilarity(embedding.values, values);
+      return {
+        id: candidate.scene.id,
+        title: candidate.scene.title,
+        category: candidate.scene.category,
+        description: candidate.scene.description,
+        missionText: candidate.scene.missionText,
+        difficulty: candidate.scene.difficulty,
+        estimatedMinutes: candidate.scene.estimatedMinutes,
+        characterName: candidate.scene.characterName,
+        characterRole: candidate.scene.characterRole,
+        similarity,
+      };
+    })
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+    .sort((left, right) => right.similarity - left.similarity || left.title.localeCompare(right.title))
+    .slice(0, input.limit);
+}

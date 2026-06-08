@@ -23,9 +23,16 @@ model User {
   displayName           String?
   avatarUrl             String?
   level                 Level     @default(A2)
+  targetLevel           Level?
   learningGoal          String?
+  learningGoals         String[]  @default([])
+  practiceContexts      String[]  @default([])
+  focusSkills           String[]  @default([])
   studyFrequency        String?
   selfAssessment        String?
+  dailyPracticeMinutes  Int?
+  targetOutcome         String?
+  correctionPreference  String?
   needsLevelTest        Boolean   @default(true)
   levelTestedAt         DateTime?
   onboardingCompletedAt DateTime?

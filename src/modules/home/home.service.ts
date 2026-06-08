@@ -1,6 +1,6 @@
-import { SceneCategory } from "@prisma/client";
 import * as homeRepo from "./home.repository";
 import * as missionsService from "../missions/missions.service";
+import * as scenesService from "../scenes/scenes.service";
 
 function getTargetTurnsFromConversationLength(conversationLength?: string | null) {
   switch (conversationLength) {
@@ -15,78 +15,15 @@ function getTargetTurnsFromConversationLength(conversationLength?: string | null
 }
 
 /**
- * Helper - mapGoalToCategories
- * Summary: Map learningGoal sang thứ tự category ưu tiên cho home.
- * Notes: Trả về null nếu user chọn ALL hoặc chưa có learningGoal.
- */
-function mapGoalToCategories(goal: string | null): SceneCategory[] | null {
-  switch (goal) {
-    case "WORK":
-      return [SceneCategory.WORK, SceneCategory.SOCIAL];
-    case "TRAVEL":
-      return [SceneCategory.TRAVEL, SceneCategory.DAILY];
-    case "DAILY":
-      return [SceneCategory.DAILY, SceneCategory.SOCIAL];
-    case "ALL":
-    case null:
-      return null;
-    default:
-      return null;
-  }
-}
-
-/**
- * Helper - sortScenesByCategoryPriority
- * Summary: Ưu tiên các scene theo thứ tự category mong muốn.
- * Notes: Dùng để giữ category chính đứng trước category fallback.
- */
-function sortScenesByCategoryPriority<T extends { category: SceneCategory }>(scenes: T[], categories: SceneCategory[]) {
-  const rank = new Map(categories.map((category, index) => [category, index]));
-  return [...scenes].sort((a, b) => {
-    const categoryDiff = (rank.get(a.category) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.category) ?? Number.MAX_SAFE_INTEGER);
-    if (categoryDiff !== 0) return categoryDiff;
-    return 0;
-  });
-}
-
-/**
  * Function Objective - getRecommendedScenesForHome
- * Summary: Tạo danh sách scene gợi ý cho home theo level và learningGoal.
- * Inputs: userId, level hiện tại, learningGoal từ survey onboarding.
- * Behavior: Nếu user chưa có session thì ưu tiên learningGoal -> nếu thiếu thì fallback theo level.
+ * Summary: Tạo danh sách scene gợi ý cho home bằng cùng semantic recommendation flow của learner.
+ * Inputs: userId hiện tại.
+ * Behavior: Reuse recommendScenes để dashboard và màn recommend dùng cùng retrieval path.
  * Returns: Danh sách scene card phù hợp để hiển thị ở dashboard.
  */
-async function getRecommendedScenesForHome(userId: string, level: Parameters<typeof homeRepo.findRecommendedScenesByLevel>[0], learningGoal: string | null) {
-  const totalSessions = await homeRepo.countSessions(userId);
-
-  if (totalSessions === 0) {
-    const categories = mapGoalToCategories(learningGoal);
-    if (categories) {
-      const primary = sortScenesByCategoryPriority(
-        await homeRepo.findRecommendedScenesByCategories(level, categories, 5),
-        categories,
-      );
-
-      if (primary.length >= 5) {
-        return primary.slice(0, 5);
-      }
-
-      const fallback = await homeRepo.findRecommendedScenesByLevel(
-        level,
-        5 - primary.length,
-        primary.map((scene) => scene.id),
-      );
-
-      return [...primary, ...fallback];
-    }
-  }
-
-  const byLevel = await homeRepo.findRecommendedScenesByLevel(level, 5);
-  if (byLevel.length > 0) {
-    return byLevel;
-  }
-
-  return homeRepo.findRecommendedScenesByCategories(level, Object.values(SceneCategory), 5);
+async function getRecommendedScenesForHome(userId: string) {
+  const recommendation = await scenesService.recommendScenes(userId, { limit: 5 });
+  return recommendation.scenes;
 }
 
 /**
@@ -105,7 +42,7 @@ export async function getHome(userId: string) {
   const [{ missions: todayMissions }, inProgressSession, recommendedScenes] = await Promise.all([
     missionsService.getTodayMissions(userId),
     homeRepo.findInProgressSession(userId),
-    getRecommendedScenesForHome(userId, user.level, user.learningGoal),
+    getRecommendedScenesForHome(userId),
   ]);
 
   const inProgressTitle = inProgressSession

@@ -24,6 +24,7 @@ export type SemanticSceneMatch = {
   title: string;
   category: SceneCategory;
   description: string;
+  missionText?: string;
   difficulty: Level;
   estimatedMinutes: number;
   characterName: string;
@@ -37,5 +38,5 @@ export type SceneEmbeddingMetadata = {
   outputDimension: number | null;
   embeddingDimension: number;
   fallbackUsed: boolean;
+  embeddingValues?: number[];
 };
-
